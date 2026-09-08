@@ -1,0 +1,58 @@
+-- ============================================================================
+-- 04_triggers_scheduler.sql — automation (Databricks SQL / Delta Lake)
+--
+-- Databricks has NO equivalent of either Oracle feature used in this file:
+--   * DML triggers (COMPOUND TRIGGER, AFTER INSERT, etc.) do not exist at
+--     all on Delta tables.
+--   * DBMS_SCHEDULER jobs are not a SQL concept in Databricks at all —
+--     there is no CREATE JOB / CREATE SCHEDULE statement to write here.
+--
+-- What changed, construct by construct:
+--   trg_qoe_churn_check   -> folded directly into 03_packages.sql's
+--                             score_site_qoe_rule_based scripts (both the
+--                             single-site and all-sites versions already
+--                             run the churn-risk UPDATE right after their
+--                             MERGE INTO qoe_score — see SECTION 2 there).
+--                             Nothing to run from this file for that piece;
+--                             it's automatic every time the QoE-scoring
+--                             script runs, same as the trigger firing on
+--                             every INSERT.
+--   JOB_REFRESH_CALL_VOLUME,
+--   JOB_RULE_BASED_QOE    -> recreated using the Databricks SQL Editor's
+--                             built-in query scheduler (steps below) — no
+--                             extra tooling, no files to deploy, nothing
+--                             outside the SQL Editor itself.
+-- ============================================================================
+
+-- ---------------------------------------------------------------------------
+-- How to schedule these two, entirely from the Databricks SQL Editor:
+--
+-- Job 1 — "refresh call volume" (was Oracle's JOB_REFRESH_CALL_VOLUME,
+--   hourly at :05):
+--   1. Databricks workspace -> SQL Editor -> open a new query.
+--   2. Paste just the "build_call_volume_hourly" block from
+--      03_packages.sql SECTION 1 (the DECLARE VARIABLE lines + the
+--      MERGE INTO call_volume_hourly statement). Leave v_start_ts/v_end_ts
+--      on their rolling defaults so each run covers the current trailing
+--      2-hour window.
+--   3. Save the query (give it a name, e.g. "refresh_call_volume").
+--   4. Click Schedule (top right of the query) -> Every hour -> minute 5
+--      -> pick a SQL Warehouse -> Save.
+--
+-- Job 2 — "rule-based QoE fallback" (was Oracle's JOB_RULE_BASED_QOE,
+--   hourly at :10, after the call-volume refresh):
+--   1. New query in the SQL Editor.
+--   2. Paste the "ALL SITES" QoE-scoring block from 03_packages.sql
+--      SECTION 2 (the MERGE INTO qoe_score + the churn-check UPDATE right
+--      after it — the churn check is already included, no separate step).
+--   3. Save the query (e.g. "rule_based_qoe_all_sites").
+--   4. Click Schedule -> Every hour -> minute 10 -> same SQL Warehouse
+--      -> Save.
+--
+-- That's it — both schedules now live inside the Databricks SQL Editor UI,
+-- editable/pausable from the same "Schedule" dialog, with run history
+-- visible under each query's "Schedule" tab. No CLI, no Asset Bundle, no
+-- separate job-definition file to keep in sync with this repo.
+-- ---------------------------------------------------------------------------
+
+-- No COMMIT needed: Databricks SQL autocommits every DDL/DML statement.

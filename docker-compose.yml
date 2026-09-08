@@ -1,0 +1,25 @@
+version: "3.8"
+
+# Spins up a real Oracle DB and auto-runs everything in db/ (in filename
+# order) as the APP_USER schema on first startup. See README.md for usage.
+services:
+  oracle-db:
+    image: gvenzl/oracle-free:23-slim
+    container_name: telecom_qoe_db
+    environment:
+      ORACLE_PASSWORD: ${ORACLE_SYSTEM_PASSWORD:-SysPassword123}
+      APP_USER: ${ORACLE_APP_USER:-telecom_qoe}
+      APP_USER_PASSWORD: ${ORACLE_APP_PASSWORD:-AppPassword123}
+    ports:
+      - "1521:1521"
+    volumes:
+      - oracle_data:/opt/oracle/oradata
+      - ./db:/container-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+
+volumes:
+  oracle_data:
