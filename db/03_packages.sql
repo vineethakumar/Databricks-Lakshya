@@ -21,8 +21,9 @@
 --     caller omits it.
 --
 -- Oracle's ROWNUM/BULK COLLECT/FOR-loop constructs are replaced by plain
--- set-based SQL (window functions, MERGE, correlated subqueries) — see
--- CONVERSION_GUIDE.md for the construct-by-construct mapping.
+-- set-based SQL (window functions, MERGE, a precomputed view + IN filter
+-- instead of a correlated subquery inside UPDATE) — see CONVERSION_GUIDE.md
+-- for the construct-by-construct mapping.
 -- ============================================================================
 
 
@@ -167,24 +168,39 @@ WHEN NOT MATCHED THEN INSERT (site_id, score_ts, predicted_qoe_score, qoe_band, 
 -- that Oracle's trg_qoe_churn_check (04_triggers_scheduler.sql) fired
 -- automatically on every INSERT INTO qoe_score is run explicitly here,
 -- right after the MERGE above, for the one site just scored.
-UPDATE subscriber AS s
+--
+-- Written as a precomputed view + plain UPDATE ... WHERE site_id IN (...)
+-- rather than a correlated subquery inside the UPDATE itself — same
+-- result, but each piece can be run and inspected on its own
+-- (SELECT * FROM _churn_check_single_site), and it avoids relying on
+-- deeply correlated subquery support inside UPDATE.
+CREATE OR REPLACE TEMPORARY VIEW _churn_check_single_site AS
+SELECT site_id
+FROM (
+    SELECT site_id, predicted_qoe_score,
+           ROW_NUMBER() OVER (PARTITION BY site_id ORDER BY score_ts DESC) AS rn
+    FROM (
+        SELECT site_id, score_ts, predicted_qoe_score,
+               ROW_NUMBER() OVER (
+                   PARTITION BY site_id, score_ts
+                   ORDER BY CASE model_version WHEN 'REG_V1' THEN 0 ELSE 1 END
+               ) AS model_rank
+        FROM qoe_score
+        WHERE site_id = v_site_id
+    ) dedup WHERE model_rank = 1
+) recent
+WHERE rn <= 3
+GROUP BY site_id
+HAVING COUNT(CASE WHEN predicted_qoe_score < 50 THEN 1 END) >= 3;
+
+UPDATE subscriber
 SET churn_flag = 'Y', churn_flagged_ts = current_timestamp()
-WHERE s.home_site_id = v_site_id
-  AND s.segment = 'HIGH_VALUE'
-  AND s.churn_flag = 'N'
-  AND (
-    SELECT COUNT(*) FROM (
-        SELECT predicted_qoe_score, ROW_NUMBER() OVER (ORDER BY score_ts DESC) AS rn
-        FROM (
-            SELECT score_ts, predicted_qoe_score,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY score_ts
-                       ORDER BY CASE model_version WHEN 'REG_V1' THEN 0 ELSE 1 END
-                   ) AS model_rank
-            FROM qoe_score WHERE site_id = v_site_id
-        ) WHERE model_rank = 1
-    ) WHERE rn <= 3 AND predicted_qoe_score < 50
-  ) >= 3;
+WHERE home_site_id = v_site_id
+  AND segment = 'HIGH_VALUE'
+  AND churn_flag = 'N'
+  AND home_site_id IN (SELECT site_id FROM _churn_check_single_site);
+
+DROP VIEW IF EXISTS _churn_check_single_site;
 
 -- ---------------------------------------------------------------------------
 -- score_site_qoe_rule_based — ALL SITES (what the hourly job actually runs)
@@ -214,23 +230,31 @@ WHEN MATCHED THEN UPDATE SET
 WHEN NOT MATCHED THEN INSERT (site_id, score_ts, predicted_qoe_score, qoe_band, model_version)
     VALUES (src.site_id, src.score_ts, src.score, qoe_band(src.score), 'RULE_BASED_V1');
 
-UPDATE subscriber AS s
+CREATE OR REPLACE TEMPORARY VIEW _churn_check_all_sites AS
+SELECT site_id
+FROM (
+    SELECT site_id, predicted_qoe_score,
+           ROW_NUMBER() OVER (PARTITION BY site_id ORDER BY score_ts DESC) AS rn
+    FROM (
+        SELECT site_id, score_ts, predicted_qoe_score,
+               ROW_NUMBER() OVER (
+                   PARTITION BY site_id, score_ts
+                   ORDER BY CASE model_version WHEN 'REG_V1' THEN 0 ELSE 1 END
+               ) AS model_rank
+        FROM qoe_score
+    ) dedup WHERE model_rank = 1
+) recent
+WHERE rn <= 3
+GROUP BY site_id
+HAVING COUNT(CASE WHEN predicted_qoe_score < 50 THEN 1 END) >= 3;
+
+UPDATE subscriber
 SET churn_flag = 'Y', churn_flagged_ts = current_timestamp()
-WHERE s.segment = 'HIGH_VALUE'
-  AND s.churn_flag = 'N'
-  AND (
-    SELECT COUNT(*) FROM (
-        SELECT predicted_qoe_score, ROW_NUMBER() OVER (ORDER BY score_ts DESC) AS rn
-        FROM (
-            SELECT score_ts, predicted_qoe_score,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY score_ts
-                       ORDER BY CASE model_version WHEN 'REG_V1' THEN 0 ELSE 1 END
-                   ) AS model_rank
-            FROM qoe_score WHERE site_id = s.home_site_id
-        ) WHERE model_rank = 1
-    ) WHERE rn <= 3 AND predicted_qoe_score < 50
-  ) >= 3;
+WHERE segment = 'HIGH_VALUE'
+  AND churn_flag = 'N'
+  AND home_site_id IN (SELECT site_id FROM _churn_check_all_sites);
+
+DROP VIEW IF EXISTS _churn_check_all_sites;
 
 
 -- ============================================================================
@@ -301,24 +325,33 @@ DECLARE OR REPLACE VARIABLE v_churn_site_id           BIGINT  DEFAULT NULL;  -- 
 DECLARE OR REPLACE VARIABLE v_churn_threshold          DECIMAL(6,3) DEFAULT 50;
 DECLARE OR REPLACE VARIABLE v_churn_consecutive_hours  INT     DEFAULT 3;
 
-UPDATE subscriber AS s
+CREATE OR REPLACE TEMPORARY VIEW _churn_check_standalone AS
+SELECT site_id
+FROM (
+    SELECT site_id, predicted_qoe_score,
+           ROW_NUMBER() OVER (PARTITION BY site_id ORDER BY score_ts DESC) AS rn
+    FROM (
+        SELECT site_id, score_ts, predicted_qoe_score,
+               ROW_NUMBER() OVER (
+                   PARTITION BY site_id, score_ts
+                   ORDER BY CASE model_version WHEN 'REG_V1' THEN 0 ELSE 1 END
+               ) AS model_rank
+        FROM qoe_score
+        WHERE site_id = v_churn_site_id
+    ) dedup WHERE model_rank = 1
+) recent
+WHERE rn <= v_churn_consecutive_hours
+GROUP BY site_id
+HAVING COUNT(CASE WHEN predicted_qoe_score < v_churn_threshold THEN 1 END) >= v_churn_consecutive_hours;
+
+UPDATE subscriber
 SET churn_flag = 'Y', churn_flagged_ts = current_timestamp()
-WHERE s.home_site_id = v_churn_site_id
-  AND s.segment = 'HIGH_VALUE'
-  AND s.churn_flag = 'N'
-  AND (
-    SELECT COUNT(*) FROM (
-        SELECT predicted_qoe_score, ROW_NUMBER() OVER (ORDER BY score_ts DESC) AS rn
-        FROM (
-            SELECT score_ts, predicted_qoe_score,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY score_ts
-                       ORDER BY CASE model_version WHEN 'REG_V1' THEN 0 ELSE 1 END
-                   ) AS model_rank
-            FROM qoe_score WHERE site_id = v_churn_site_id
-        ) WHERE model_rank = 1
-    ) WHERE rn <= v_churn_consecutive_hours AND predicted_qoe_score < v_churn_threshold
-  ) >= v_churn_consecutive_hours;
+WHERE home_site_id = v_churn_site_id
+  AND segment = 'HIGH_VALUE'
+  AND churn_flag = 'N'
+  AND home_site_id IN (SELECT site_id FROM _churn_check_standalone);
+
+DROP VIEW IF EXISTS _churn_check_standalone;
 
 -- ---------------------------------------------------------------------------
 -- build_triage_queue
@@ -384,12 +417,23 @@ FROM (
         sv.high_value_count,
         sv.flagged_churn_count
     FROM call_event_prediction p
-    JOIN qoe_score q
-      ON q.site_id = p.site_id
-     AND q.score_ts = (
-            SELECT MAX(q2.score_ts) FROM qoe_score q2
-            WHERE q2.site_id = p.site_id AND q2.score_ts <= p.prediction_ts
-         )
+    -- Latest QoE score per site as of v_prediction_ts, precomputed with a
+    -- window function instead of a scalar subquery correlated to p.site_id
+    -- inside the JOIN condition — Databricks SQL doesn't support a
+    -- correlated scalar subquery there (only in WHERE/SELECT/aggregations/
+    -- UPDATE/MERGE/DELETE). Every row here already shares the same
+    -- p.prediction_ts = v_prediction_ts (see the WHERE below), so "as of
+    -- p.prediction_ts" and "as of v_prediction_ts" are the same thing.
+    JOIN (
+        SELECT site_id, score_ts, predicted_qoe_score
+        FROM (
+            SELECT site_id, score_ts, predicted_qoe_score,
+                   ROW_NUMBER() OVER (PARTITION BY site_id ORDER BY score_ts DESC) AS rn
+            FROM qoe_score
+            WHERE score_ts <= v_prediction_ts
+        ) latest
+        WHERE rn = 1
+    ) q ON q.site_id = p.site_id
     LEFT JOIN vw_site_subscriber_value sv ON sv.site_id = p.site_id
     LEFT JOIN (
         -- Alarms active as of the prediction timestamp: still open, or
@@ -408,24 +452,33 @@ FROM (
 
 -- Replaces "FOR r IN (SELECT DISTINCT site_id FROM triage_queue ...) LOOP
 -- flag_churn_risk(r.site_id); END LOOP": one set-based UPDATE covering
--- every site touched by this run, same threshold/window as flag_churn_risk.
-UPDATE subscriber AS s
+-- every site touched by this run, same threshold/window as flag_churn_risk,
+-- narrowed to just the sites this run actually touched.
+CREATE OR REPLACE TEMPORARY VIEW _churn_check_triage_run AS
+SELECT site_id
+FROM (
+    SELECT site_id, predicted_qoe_score,
+           ROW_NUMBER() OVER (PARTITION BY site_id ORDER BY score_ts DESC) AS rn
+    FROM (
+        SELECT site_id, score_ts, predicted_qoe_score,
+               ROW_NUMBER() OVER (
+                   PARTITION BY site_id, score_ts
+                   ORDER BY CASE model_version WHEN 'REG_V1' THEN 0 ELSE 1 END
+               ) AS model_rank
+        FROM qoe_score
+        WHERE site_id IN (SELECT DISTINCT site_id FROM triage_queue WHERE prediction_ts = v_prediction_ts)
+    ) dedup WHERE model_rank = 1
+) recent
+WHERE rn <= 3
+GROUP BY site_id
+HAVING COUNT(CASE WHEN predicted_qoe_score < 50 THEN 1 END) >= 3;
+
+UPDATE subscriber
 SET churn_flag = 'Y', churn_flagged_ts = current_timestamp()
-WHERE s.segment = 'HIGH_VALUE'
-  AND s.churn_flag = 'N'
-  AND s.home_site_id IN (SELECT DISTINCT site_id FROM triage_queue WHERE prediction_ts = v_prediction_ts)
-  AND (
-    SELECT COUNT(*) FROM (
-        SELECT predicted_qoe_score, ROW_NUMBER() OVER (ORDER BY score_ts DESC) AS rn
-        FROM (
-            SELECT score_ts, predicted_qoe_score,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY score_ts
-                       ORDER BY CASE model_version WHEN 'REG_V1' THEN 0 ELSE 1 END
-                   ) AS model_rank
-            FROM qoe_score WHERE site_id = s.home_site_id
-        ) WHERE model_rank = 1
-    ) WHERE rn <= 3 AND predicted_qoe_score < 50
-  ) >= 3;
+WHERE segment = 'HIGH_VALUE'
+  AND churn_flag = 'N'
+  AND home_site_id IN (SELECT site_id FROM _churn_check_triage_run);
+
+DROP VIEW IF EXISTS _churn_check_triage_run;
 
 -- No COMMIT needed: Databricks SQL autocommits every DDL/DML statement.

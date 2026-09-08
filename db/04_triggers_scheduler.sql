@@ -18,14 +18,24 @@
 --                             script runs, same as the trigger firing on
 --                             every INSERT.
 --   JOB_REFRESH_CALL_VOLUME,
---   JOB_RULE_BASED_QOE    -> recreated using the Databricks SQL Editor's
---                             built-in query scheduler (steps below) — no
---                             extra tooling, no files to deploy, nothing
---                             outside the SQL Editor itself.
+--   JOB_RULE_BASED_QOE    -> recreated as two real Databricks Jobs by
+--                             db/create_scheduled_jobs.py (run once, or
+--                             again any time 03_packages.sql changes) —
+--                             see that file for the full explanation. A
+--                             manual, UI-only alternative is below if you
+--                             don't want to install the Databricks SDK.
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
--- How to schedule these two, entirely from the Databricks SQL Editor:
+-- Recommended: python db/create_scheduled_jobs.py
+--   Creates/updates both jobs (job_refresh_call_volume at :05,
+--   job_rule_based_qoe at :10) via the Databricks Jobs API. Version-
+--   controlled and reproducible — see that script's docstring for setup
+--   (pip install databricks-sdk, a workspace auth profile, and a SQL
+--   warehouse id).
+--
+-- Manual alternative, entirely from the Databricks SQL Editor (no SDK,
+-- no CLI — useful for a one-off check without setting up API access):
 --
 -- Job 1 — "refresh call volume" (was Oracle's JOB_REFRESH_CALL_VOLUME,
 --   hourly at :05):
@@ -48,11 +58,6 @@
 --   3. Save the query (e.g. "rule_based_qoe_all_sites").
 --   4. Click Schedule -> Every hour -> minute 10 -> same SQL Warehouse
 --      -> Save.
---
--- That's it — both schedules now live inside the Databricks SQL Editor UI,
--- editable/pausable from the same "Schedule" dialog, with run history
--- visible under each query's "Schedule" tab. No CLI, no Asset Bundle, no
--- separate job-definition file to keep in sync with this repo.
 -- ---------------------------------------------------------------------------
 
 -- No COMMIT needed: Databricks SQL autocommits every DDL/DML statement.

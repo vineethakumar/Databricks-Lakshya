@@ -31,6 +31,24 @@
 -- USE SCHEMA  <your_schema>;
 
 -- ---------------------------------------------------------------------------
+-- Make this script re-runnable: drop any existing objects first. Children
+-- are dropped before parents so Unity Catalog's FK dependency tracking
+-- doesn't block dropping a referenced table.
+-- ---------------------------------------------------------------------------
+DROP TABLE IF EXISTS triage_queue;
+DROP TABLE IF EXISTS qoe_score;
+DROP TABLE IF EXISTS call_event_prediction;
+DROP TABLE IF EXISTS call_volume_hourly;
+DROP TABLE IF EXISTS customer_satisfaction;
+DROP TABLE IF EXISTS ticket;
+DROP TABLE IF EXISTS network_kpi;
+DROP TABLE IF EXISTS network_event;
+DROP TABLE IF EXISTS alarm_log;
+DROP TABLE IF EXISTS cdr;
+DROP TABLE IF EXISTS subscriber;
+DROP TABLE IF EXISTS site;
+
+-- ---------------------------------------------------------------------------
 -- DIMENSION: SITE  (cell site / node inventory)
 -- ---------------------------------------------------------------------------
 CREATE TABLE site (
@@ -43,7 +61,8 @@ CREATE TABLE site (
     capacity_erlangs DECIMAL(10,2) NOT NULL,
     created_ts       TIMESTAMP    DEFAULT current_timestamp() NOT NULL,
     CONSTRAINT pk_site PRIMARY KEY (site_id)
-);
+)
+TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported');
 
 ALTER TABLE site ADD CONSTRAINT ck_site_type CHECK (site_type IN ('MACRO','SMALL_CELL','INDOOR'));
 
@@ -64,7 +83,8 @@ CREATE TABLE subscriber (
     CONSTRAINT pk_subscriber PRIMARY KEY (subscriber_id),
     CONSTRAINT fk_subscriber_site FOREIGN KEY (home_site_id) REFERENCES site(site_id)
 )
-CLUSTER BY (home_site_id); -- replaces ix_subscriber_site
+CLUSTER BY (home_site_id)
+TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported'); -- replaces ix_subscriber_site
 
 ALTER TABLE subscriber ADD CONSTRAINT ck_subscriber_segment CHECK (segment IN ('HIGH_VALUE','MEDIUM_VALUE','LOW_VALUE'));
 ALTER TABLE subscriber ADD CONSTRAINT ck_subscriber_churn_flag CHECK (churn_flag IN ('Y','N'));
@@ -87,7 +107,8 @@ CREATE TABLE cdr (
     CONSTRAINT fk_cdr_subscriber FOREIGN KEY (subscriber_id) REFERENCES subscriber(subscriber_id),
     CONSTRAINT fk_cdr_site       FOREIGN KEY (site_id)       REFERENCES site(site_id)
 )
-CLUSTER BY (site_id, call_start_ts); -- replaces ix_cdr_site_ts, ix_cdr_sub, ix_cdr_result
+CLUSTER BY (site_id, call_start_ts)
+TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported'); -- replaces ix_cdr_site_ts, ix_cdr_sub, ix_cdr_result
                                      -- (liquid clustering allows up to 4 columns if you
                                      -- want subscriber_id / call_result added too)
 
@@ -108,7 +129,8 @@ CREATE TABLE alarm_log (
     CONSTRAINT pk_alarm_log PRIMARY KEY (alarm_id),
     CONSTRAINT fk_alarm_site FOREIGN KEY (site_id) REFERENCES site(site_id)
 )
-CLUSTER BY (site_id, alarm_ts); -- replaces ix_alarm_site_ts
+CLUSTER BY (site_id, alarm_ts)
+TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported'); -- replaces ix_alarm_site_ts
 
 ALTER TABLE alarm_log ADD CONSTRAINT ck_alarm_severity CHECK (severity IN ('CRITICAL','MAJOR','MINOR','WARNING'));
 
@@ -125,7 +147,8 @@ CREATE TABLE network_event (
     CONSTRAINT pk_network_event PRIMARY KEY (event_id),
     CONSTRAINT fk_event_site FOREIGN KEY (site_id) REFERENCES site(site_id)
 )
-CLUSTER BY (site_id, event_ts); -- replaces ix_event_site_ts
+CLUSTER BY (site_id, event_ts)
+TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported'); -- replaces ix_event_site_ts
 
 ALTER TABLE network_event ADD CONSTRAINT ck_event_severity CHECK (event_severity IN ('INFO','WARNING','SEVERE'));
 
@@ -149,7 +172,8 @@ CREATE TABLE network_kpi (
     -- (site_id, kpi_ts) is enforced by the MERGE in 03_packages.sql instead
     -- of the database — see CONVERSION_GUIDE.md.
 )
-CLUSTER BY (site_id, kpi_ts); -- replaces ix_kpi_ts (and covers site_id lookups too)
+CLUSTER BY (site_id, kpi_ts)
+TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported'); -- replaces ix_kpi_ts (and covers site_id lookups too)
 
 -- ---------------------------------------------------------------------------
 -- FACT: TICKET (trouble tickets / resolution times)
@@ -168,7 +192,8 @@ CREATE TABLE ticket (
     CONSTRAINT fk_ticket_sub  FOREIGN KEY (subscriber_id) REFERENCES subscriber(subscriber_id),
     CONSTRAINT fk_ticket_site FOREIGN KEY (site_id)       REFERENCES site(site_id)
 )
-CLUSTER BY (site_id, opened_ts); -- replaces ix_ticket_site_ts
+CLUSTER BY (site_id, opened_ts)
+TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported'); -- replaces ix_ticket_site_ts
 
 ALTER TABLE ticket ADD CONSTRAINT ck_ticket_priority CHECK (priority IN ('P1','P2','P3','P4'));
 
@@ -185,7 +210,8 @@ CREATE TABLE customer_satisfaction (
     CONSTRAINT pk_customer_satisfaction PRIMARY KEY (survey_id),
     CONSTRAINT fk_csat_sub FOREIGN KEY (subscriber_id) REFERENCES subscriber(subscriber_id)
 )
-CLUSTER BY (subscriber_id, survey_ts); -- replaces ix_csat_sub_ts
+CLUSTER BY (subscriber_id, survey_ts)
+TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported'); -- replaces ix_csat_sub_ts
 
 ALTER TABLE customer_satisfaction ADD CONSTRAINT ck_csat_nps CHECK (nps_score BETWEEN -100 AND 100);
 ALTER TABLE customer_satisfaction ADD CONSTRAINT ck_csat_csat CHECK (csat_score BETWEEN 1 AND 5);
@@ -205,7 +231,8 @@ CREATE TABLE call_volume_hourly (
     refreshed_ts   TIMESTAMP DEFAULT current_timestamp(),
     CONSTRAINT pk_call_volume_hourly PRIMARY KEY (site_id, hour_ts),
     CONSTRAINT fk_cvh_site FOREIGN KEY (site_id) REFERENCES site(site_id)
-);
+)
+TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported');
 
 -- ---------------------------------------------------------------------------
 -- MODEL OUTPUT: CALL_EVENT_PREDICTION — LSTM forecast written by the
@@ -225,7 +252,8 @@ CREATE TABLE call_event_prediction (
     CONSTRAINT pk_call_event_prediction PRIMARY KEY (prediction_id),
     CONSTRAINT fk_cep_site FOREIGN KEY (site_id) REFERENCES site(site_id)
 )
-CLUSTER BY (site_id, prediction_ts); -- replaces ix_cep_site_ts
+CLUSTER BY (site_id, prediction_ts)
+TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported'); -- replaces ix_cep_site_ts
 
 ALTER TABLE call_event_prediction ADD CONSTRAINT ck_cep_risk_level CHECK (risk_level IN ('LOW','MODERATE','HIGH','CRITICAL'));
 
@@ -246,7 +274,8 @@ CREATE TABLE qoe_score (
     -- Oracle also had: CONSTRAINT uq_qoe_site_ts_model UNIQUE (site_id, score_ts, model_version)
     -- Same note as network_kpi above: enforced via MERGE, not a DB constraint.
 )
-CLUSTER BY (site_id, score_ts); -- replaces ix_qoe_site_ts
+CLUSTER BY (site_id, score_ts)
+TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported'); -- replaces ix_qoe_site_ts
 
 ALTER TABLE qoe_score ADD CONSTRAINT ck_qoe_band CHECK (qoe_band IN ('EXCELLENT','GOOD','FAIR','POOR','CRITICAL'));
 
@@ -271,7 +300,8 @@ CREATE TABLE triage_queue (
     CONSTRAINT pk_triage_queue PRIMARY KEY (triage_id),
     CONSTRAINT fk_triage_site FOREIGN KEY (site_id) REFERENCES site(site_id)
 )
-CLUSTER BY (prediction_ts, status); -- replaces ix_triage_pred_ts, ix_triage_status
+CLUSTER BY (prediction_ts, status)
+TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported'); -- replaces ix_triage_pred_ts, ix_triage_status
 
 ALTER TABLE triage_queue ADD CONSTRAINT ck_triage_status CHECK (status IN ('OPEN','ACKNOWLEDGED','RESOLVED'));
 

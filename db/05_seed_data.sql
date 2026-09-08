@@ -21,6 +21,28 @@
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
+-- Make this script re-runnable: unlike 03_packages.sql's MERGE-based scripts,
+-- the INSERTs below are plain appends, so re-running this file without first
+-- clearing the seeded tables would duplicate every row (and, since the
+-- generated dates are anchored to current_timestamp(), a rerun on a later
+-- day would layer a second, differently-dated incident window on top of the
+-- first). Clear children before parents so Unity Catalog's FK dependency
+-- tracking doesn't complain, then reseed from a clean slate.
+-- ---------------------------------------------------------------------------
+DELETE FROM triage_queue;
+DELETE FROM qoe_score;
+DELETE FROM call_event_prediction;
+DELETE FROM call_volume_hourly;
+DELETE FROM customer_satisfaction;
+DELETE FROM ticket;
+DELETE FROM network_kpi;
+DELETE FROM network_event;
+DELETE FROM alarm_log;
+DELETE FROM cdr;
+DELETE FROM subscriber;
+DELETE FROM site;
+
+-- ---------------------------------------------------------------------------
 -- Sites
 -- ---------------------------------------------------------------------------
 INSERT INTO site (site_name, region, latitude, longitude, site_type, capacity_erlangs) VALUES
@@ -130,6 +152,10 @@ SELECT
 FROM _cdr_plan p
 LATERAL VIEW explode(sequence(1, CAST(p.call_count AS INT))) c AS call_num;
 
+-- duration_sec is computed here (from the already-fixed "result"), not in
+-- the final INSERT, so it's a plain view column referenced twice below
+-- (once for the column itself, once inside call_end_ts) instead of a
+-- second independent rand() call that could disagree with the first.
 CREATE OR REPLACE TEMPORARY VIEW _cdr_calls AS
 SELECT
     site_id, hour_ts, call_num, start_offset_sec,
@@ -138,7 +164,13 @@ SELECT
         WHEN roll < call_drop_rate + (packet_drop_rate * 2) THEN 'FAILED'
         WHEN roll < call_drop_rate + (packet_drop_rate * 2) + (1 - rrc_setup_success_rate) * 0.3 THEN 'BLOCKED'
         ELSE 'SUCCESS'
-    END AS result
+    END AS result,
+    CASE
+        WHEN roll < call_drop_rate THEN CAST(rand() * 115 + 5 AS INT)    -- DROPPED: 5-120s
+        WHEN roll < call_drop_rate + (packet_drop_rate * 2) THEN 0       -- FAILED: 0s
+        WHEN roll < call_drop_rate + (packet_drop_rate * 2) + (1 - rrc_setup_success_rate) * 0.3 THEN 0 -- BLOCKED: 0s
+        ELSE CAST(rand() * 590 + 10 AS INT)                              -- SUCCESS: 10-600s
+    END AS duration_sec
 FROM _cdr_rolls;
 
 INSERT INTO cdr (call_id, subscriber_id, site_id, call_start_ts, call_end_ts, duration_sec, call_type, call_result, termination_cause_code)
@@ -148,20 +180,14 @@ SELECT
     cc.site_id,
     cc.hour_ts + (cc.start_offset_sec * INTERVAL 1 SECONDS)                                    AS call_start_ts,
     CASE WHEN cc.result IN ('SUCCESS', 'DROPPED')
-         THEN cc.hour_ts + (cc.start_offset_sec * INTERVAL 1 SECONDS) + (d.duration_sec * INTERVAL 1 SECONDS)
+         THEN cc.hour_ts + (cc.start_offset_sec * INTERVAL 1 SECONDS) + (cc.duration_sec * INTERVAL 1 SECONDS)
          ELSE NULL END                                                                         AS call_end_ts,
-    d.duration_sec,
+    cc.duration_sec,
     'VOICE'                                                                                    AS call_type,
     cc.result                                                                                  AS call_result,
     CASE cc.result WHEN 'SUCCESS' THEN NULL WHEN 'DROPPED' THEN 16 WHEN 'FAILED' THEN 34 ELSE 22 END AS termination_cause_code
 FROM _cdr_calls cc
-JOIN _site_subs ss ON ss.site_id = cc.site_id
-CROSS JOIN LATERAL (
-    SELECT CASE cc.result
-        WHEN 'SUCCESS' THEN CAST(rand() * 590 + 10 AS INT)   -- 10-600s
-        WHEN 'DROPPED' THEN CAST(rand() * 115 + 5 AS INT)    -- 5-120s
-        ELSE 0 END AS duration_sec
-) d;
+JOIN _site_subs ss ON ss.site_id = cc.site_id;
 
 -- ---------------------------------------------------------------------------
 -- Alarms + network events tied to the incident window (bad sites only)
@@ -188,24 +214,30 @@ FROM site WHERE site_name IN ('SITE-C-INDUSTRIAL', 'SITE-E-MALL');
 -- Tickets from affected subscribers during the incident: 20 per bad site,
 -- opened at a random point in the 72h incident window, resolved 30-600 min
 -- later — same as Oracle's "FOR t IN 1..20 LOOP" per bad site.
+-- One row per ticket with opened_ts/resolution_min fixed as real view
+-- columns (not recomputed rand() calls), so closed_ts below stays
+-- consistent with opened_ts + resolution_min instead of drifting.
+CREATE OR REPLACE TEMPORARY VIEW _ticket_plan AS
+SELECT
+    bad.site_id,
+    t.ticket_num,
+    (date_trunc('DAY', current_timestamp()) - INTERVAL 3 DAYS) + (CAST(rand() * 259200 AS INT) * INTERVAL 1 SECONDS) AS opened_ts,
+    CAST(rand() * 570 + 30 AS INT) AS resolution_min
+FROM (SELECT site_id FROM site WHERE site_name IN ('SITE-C-INDUSTRIAL', 'SITE-E-MALL')) bad
+LATERAL VIEW explode(sequence(1, 20)) t AS ticket_num;
+
 INSERT INTO ticket (subscriber_id, site_id, opened_ts, closed_ts, resolution_time_min, category, priority, root_cause)
 SELECT
     element_at(ss.sub_ids, CAST(FLOOR(rand() * ss.sub_count) AS INT) + 1) AS subscriber_id,
-    bad.site_id,
-    opened_ts,
-    opened_ts + (resolution_min * 60 * INTERVAL 1 SECONDS)                AS closed_ts,
-    resolution_min,
+    p.site_id,
+    p.opened_ts,
+    p.opened_ts + (p.resolution_min * 60 * INTERVAL 1 SECONDS)            AS closed_ts,
+    p.resolution_min,
     'DROPPED_CALLS',
     'P2',
     'Backhaul link degradation'
-FROM (SELECT site_id FROM site WHERE site_name IN ('SITE-C-INDUSTRIAL', 'SITE-E-MALL')) bad
-JOIN _site_subs ss ON ss.site_id = bad.site_id
-LATERAL VIEW explode(sequence(1, 20)) t AS ticket_num
-CROSS JOIN LATERAL (
-    SELECT
-        (date_trunc('DAY', current_timestamp()) - INTERVAL 3 DAYS) + (CAST(rand() * 259200 AS INT) * INTERVAL 1 SECONDS) AS opened_ts,
-        CAST(rand() * 570 + 30 AS INT) AS resolution_min
-) g;
+FROM _ticket_plan p
+JOIN _site_subs ss ON ss.site_id = p.site_id;
 
 -- ---------------------------------------------------------------------------
 -- CSAT/NPS surveys — one every ~7 days per subscriber; depressed for
@@ -239,8 +271,9 @@ LATERAL VIEW explode(sequence(
 
 -- ---------------------------------------------------------------------------
 -- Backfill call_volume_hourly for the whole seeded window so the LSTM
--- pipeline and views have data immediately (normally the scheduled job in
--- 04_jobs_workflow.yml does this hourly on an ongoing basis).
+-- pipeline and views have data immediately (normally the scheduled job
+-- described in 04_triggers_scheduler.sql does this hourly on an ongoing
+-- basis).
 -- ---------------------------------------------------------------------------
 DECLARE OR REPLACE VARIABLE v_start_ts TIMESTAMP DEFAULT date_trunc('DAY', current_timestamp()) - INTERVAL 10 DAYS;
 DECLARE OR REPLACE VARIABLE v_end_ts   TIMESTAMP DEFAULT date_trunc('DAY', current_timestamp()) + INTERVAL 1 DAYS;
@@ -272,5 +305,6 @@ DROP VIEW IF EXISTS _site_subs;
 DROP VIEW IF EXISTS _cdr_plan;
 DROP VIEW IF EXISTS _cdr_rolls;
 DROP VIEW IF EXISTS _cdr_calls;
+DROP VIEW IF EXISTS _ticket_plan;
 
 -- No COMMIT needed: Databricks SQL autocommits every DDL/DML statement.
