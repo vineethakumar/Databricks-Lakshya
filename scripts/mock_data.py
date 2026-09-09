@@ -8,6 +8,8 @@ Oracle views produce (db/02_views.sql: VW_SITE_HOURLY_FEATURES /
 VW_QOE_TRAINING_DATA) so the exact same src/features.py and src/models/
 code paths run whether the data came from Oracle or from here.
 """
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
@@ -19,8 +21,8 @@ SITES = [
     ("SITE-B-SUBURB",     500, 3, 30, 1100.0, False),
     ("SITE-C-INDUSTRIAL", 400, 9, 30, 2200.0, True),   # the incident site
 ]
-N_DAYS = 8
-INCIDENT_START_DAY = 6
+N_DAYS = 14  # 3 sites * 14 days * 24h = 1008 site_hourly_features rows
+INCIDENT_START_DAY = 12
 INCIDENT_DURATION_HOURS = 48  # spans the last 2 days of the window, so the
                               # incident is still "live" at the most recent
                               # hour of data — otherwise the latest lookback
@@ -29,6 +31,7 @@ INCIDENT_DURATION_HOURS = 48  # spans the last 2 days of the window, so the
                               # look identical at "now"
 LOOKBACK_HOURS = 24
 HORIZON_HOURS = 6
+QOE_ROWS_PER_SEGMENT = 112  # 3 sites * 3 segments * 112 = 1008 qoe_training_data rows
 
 
 def make_site_hourly_features(site_name: str, capacity: int, is_bad: bool) -> tuple[pd.DataFrame, pd.Timestamp]:
@@ -80,7 +83,7 @@ def make_qoe_training_rows(site_name: str, is_bad: bool) -> list[dict]:
     Mirrors the shape of VW_QOE_TRAINING_DATA (db/02_views.sql)."""
     rows = []
     for segment in ("HIGH_VALUE", "MEDIUM_VALUE", "LOW_VALUE"):
-        for _ in range(40):
+        for _ in range(QOE_ROWS_PER_SEGMENT):
             degraded = is_bad and rng.uniform(0, 1) < 0.5
             if degraded:
                 latency, jitter = 120 + rng.uniform(0, 80), 15 + rng.uniform(0, 10)
@@ -130,6 +133,28 @@ def generate_all() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     raw_df = pd.concat(site_frames, ignore_index=True)
     qoe_df = pd.DataFrame(qoe_rows)
     site_meta_df = pd.DataFrame(meta_rows)
+    return raw_df, qoe_df, site_meta_df
+
+
+def load_or_generate(data_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Reads the mock dataset from data_dir if it was already generated
+    there, otherwise generates it once and writes it out — so repeated runs
+    reuse the same on-disk CSVs instead of regenerating in memory each time."""
+    raw_path = data_dir / "site_hourly_features.csv"
+    qoe_path = data_dir / "qoe_training_data.csv"
+    meta_path = data_dir / "site_meta.csv"
+
+    if raw_path.exists() and qoe_path.exists() and meta_path.exists():
+        raw_df = pd.read_csv(raw_path, parse_dates=["hour_ts"])
+        qoe_df = pd.read_csv(qoe_path)
+        site_meta_df = pd.read_csv(meta_path)
+        return raw_df, qoe_df, site_meta_df
+
+    raw_df, qoe_df, site_meta_df = generate_all()
+    data_dir.mkdir(parents=True, exist_ok=True)
+    raw_df.to_csv(raw_path, index=False)
+    qoe_df.to_csv(qoe_path, index=False)
+    site_meta_df.to_csv(meta_path, index=False)
     return raw_df, qoe_df, site_meta_df
 
 

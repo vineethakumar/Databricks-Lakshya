@@ -1,6 +1,8 @@
-"""Runs the real modeling code end to end WITHOUT Oracle: generates a small
-synthetic dataset in memory (same shape/story as db/05_seed_data.sql — a
-3-day incident on one site), trains the actual LSTM (src/models/
+"""Runs the real modeling code end to end WITHOUT Oracle: loads a synthetic
+dataset (same shape/story as db/05_seed_data.sql — a multi-day incident on
+one site) from data/mock/*.csv — generating and persisting it there once if
+it doesn't exist yet, so repeated runs reuse the same data instead of
+regenerating it in memory each time — trains the actual LSTM (src/models/
 call_event_lstm.py) and QoE regressor (src/models/qoe_regression.py) on it,
 runs inference, and re-ranks sites using a pure-Python mirror of the
 PL/SQL triage math in db/03_packages.sql (PKG_TRIAGE).
@@ -11,8 +13,10 @@ actual PL/SQL (db/03_packages.sql runs only inside Oracle) or the Oracle
 read/write path in src/db.py, src/data_loader.py, src/predict_and_score.py
 — those need a real Oracle instance (see README.md's docker-compose path).
 
-To inspect the generated mock data yourself (as CSV) instead of only
-in-memory, use scripts/generate_mock_csv.py + scripts/demo_from_csv.py.
+To regenerate the CSVs from scratch (e.g. after changing scripts/mock_data.py),
+delete data/mock/*.csv or run scripts/generate_mock_csv.py, which always
+overwrites them. To hand-edit the data and see the effect flow through the
+pipeline, use scripts/demo_from_csv.py instead.
 
 Usage:
     python scripts/demo_local_no_db.py
@@ -29,7 +33,7 @@ from scripts.mock_data import (
     HORIZON_HOURS,
     LOOKBACK_HOURS,
     customer_impact_score,
-    generate_all,
+    load_or_generate,
     recommended_action,
     technical_severity_score,
 )
@@ -37,12 +41,15 @@ from src.features import build_latest_windows, build_windowed_dataset
 from src.models.call_event_lstm import CallEventLSTM
 from src.models.qoe_regression import QoERegressor, compute_composite_qoe_label
 
+DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "mock"
+
 
 def main() -> None:
     print("=" * 78)
-    print("STEP 1/4: generating synthetic per-site hourly data (in memory, no DB)")
+    print(f"STEP 1/4: loading synthetic per-site hourly data from {DATA_DIR} "
+          "(generated once if missing)")
     print("=" * 78)
-    raw_df, qoe_df, site_meta_df = generate_all()
+    raw_df, qoe_df, site_meta_df = load_or_generate(DATA_DIR)
     site_meta = {r.site_id: r._asdict() for r in site_meta_df.itertuples(index=False)}
     print(f"  {len(raw_df)} site-hours across {len(site_meta)} sites "
           f"(incident simulated on SITE-C-INDUSTRIAL)")
