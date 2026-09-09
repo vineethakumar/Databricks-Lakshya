@@ -69,7 +69,7 @@ Other procedural constructs:
 | `FOR r IN (SELECT DISTINCT site_id ...) LOOP flag_churn_risk(r.site_id); END LOOP` | one set-based `UPDATE`, instead of calling the single-site procedure once per row — see the closing `UPDATE` in `build_triage_queue` |
 | the churn-check condition itself (`COUNT(*) FROM (...) >= n` as a scalar subquery correlated to the row being updated) | rewritten as a `CREATE OR REPLACE TEMPORARY VIEW` that computes the eligible `site_id`s first (via `ROW_NUMBER()`/`GROUP BY ... HAVING`), followed by a plain `UPDATE ... WHERE home_site_id IN (SELECT site_id FROM that_view)` | A correlated subquery nested several levels deep inside an `UPDATE`'s `WHERE` clause is exactly the kind of construct that varies most between SQL engines. Splitting it into "compute eligible sites" then "update where site is in that set" is provably correct set logic, and each half can be run and inspected on its own (`SELECT * FROM _churn_check_...`) if something looks wrong |
 | `COMPOUND TRIGGER` (`trg_qoe_churn_check`) | Databricks has no DML triggers at all. The churn-check logic is folded directly into `score_site_qoe_rule_based` (both single-site and all-sites versions) in `03_packages.sql`, right after the `MERGE INTO qoe_score` — it now runs automatically every time that script runs, same as the trigger used to fire on every `INSERT` |
-| `DBMS_SCHEDULER.CREATE_JOB` (`04_triggers_scheduler.sql`) | No SQL equivalent. Recreated as two real Databricks Jobs by `create_scheduled_jobs.py` (Databricks SDK, version-controlled), with a manual SQL-Editor-only fallback documented inside `04_triggers_scheduler.sql` for a quick one-off check |
+| `DBMS_SCHEDULER.CREATE_JOB` (`04_triggers_scheduler.sql`) | No SQL equivalent, and removed rather than recreated — production gets its data from a UI instead of a continuous live feed, so there's nothing to refresh on a schedule. The pipeline runs against the static CSVs under `data/mock/` for now (see `scripts/demo_from_csv.py` / `scripts/demo_from_sql.py`) |
 
 ## Seed data (05_seed_data.sql)
 
@@ -102,14 +102,11 @@ re-run from scratch (e.g. to reset a demo workspace) without manual cleanup:
 | `01_schema.sql` | `DROP TABLE IF EXISTS` for every table, children before parents (Unity Catalog FK dependency tracking blocks dropping a table still referenced by another table's FK), right before the `CREATE TABLE` statements |
 | `02_views.sql` | `CREATE OR REPLACE VIEW` — no change needed |
 | `03_packages.sql` | `CREATE OR REPLACE FUNCTION`/`TEMPORARY VIEW`, `DECLARE OR REPLACE VARIABLE`, and `MERGE`/`DELETE`-then-`INSERT` for anything with side effects — no change needed |
-| `04_triggers_scheduler.sql` | comments only, nothing to run |
+| `04_triggers_scheduler.sql` | comments only, nothing to run — the scheduler jobs were removed rather than made re-runnable |
 | `05_seed_data.sql` | plain `INSERT`s would duplicate rows (and layer a second, differently-dated incident window) on a second run, so `DELETE FROM` clears every seeded table, children before parents, before the inserts |
-| `create_scheduled_jobs.py` | looks up each job by name and calls `w.jobs.reset(...)` instead of `w.jobs.create(...)` if it already exists |
 
 ## What still needs a value filled in
 
 - `01_schema.sql`: run `USE CATALOG <catalog>; USE SCHEMA <schema>;` once
   before the rest of the scripts (table/view/function names are left
   unqualified so they match the Oracle names exactly).
-- `create_scheduled_jobs.py`: set `DATABRICKS_SQL_WAREHOUSE_ID` (and a
-  Databricks auth profile/token) before running it — see its docstring.

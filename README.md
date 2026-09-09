@@ -12,7 +12,7 @@ CDR / alarms / events / KPIs / tickets / CSAT-NPS   (db/01_schema.sql)
               │
               ▼
    PL/SQL ETL: PKG_FEATURE_ENGINEERING               (db/03_packages.sql)
-   builds CALL_VOLUME_HOURLY from raw CDR every hour  (db/04_triggers_scheduler.sql)
+   builds CALL_VOLUME_HOURLY from raw CDR on demand
               │
               ▼
    Feature views: VW_SITE_HOURLY_FEATURES,            (db/02_views.sql)
@@ -40,8 +40,9 @@ The database is not just storage here — `PKG_FEATURE_ENGINEERING`,
 business logic: the CDR → hourly-aggregate ETL, a rule-based QoE fallback
 formula, and the customer-impact-weighted triage ranking + churn-risk
 flagging. Python owns the two ML models; PL/SQL owns aggregation, scoring
-fallback, and the triage/churn decision logic, and runs on its own schedule
-via `DBMS_SCHEDULER` independent of whether the Python jobs have run yet.
+fallback, and the triage/churn decision logic, run on demand rather than on
+a schedule — production will get its data from a UI instead of a
+continuous live feed.
 
 ## Data model (`db/01_schema.sql`)
 
@@ -184,11 +185,11 @@ ORDER BY prediction_ts DESC, priority_rank;
 
 ### 5. Re-run on an ongoing basis
 
-In production, `04_triggers_scheduler.sql`'s hourly jobs keep
-`call_volume_hourly` and a rule-based QoE fallback fresh inside the
-database on their own; schedule `scripts/run_pipeline.py` (or split its
-three steps) via cron/Airflow/DBMS_SCHEDULER-triggered external job to keep
-the ML-based forecasts and triage queue current, e.g. hourly.
+There's no scheduler keeping this current on its own — production will get
+its data from a UI rather than a continuous live feed, so `call_volume_hourly`
+and the rule-based QoE fallback are only ever refreshed on demand by calling
+the relevant `03_packages.sql` script (or by re-running
+`scripts/run_pipeline.py`).
 
 ## Tests
 
@@ -206,7 +207,8 @@ db/
   01_schema.sql               tables
   02_views.sql                feature views for the ML pipeline
   03_packages.sql             PKG_FEATURE_ENGINEERING / PKG_QOE_SCORING / PKG_TRIAGE
-  04_triggers_scheduler.sql   churn-check trigger + hourly DBMS_SCHEDULER jobs
+  04_triggers_scheduler.sql   removed (see db/CONVERSION_GUIDE.md) — churn-check now
+                                 lives in 03_packages.sql, no scheduler needed
   05_seed_data.sql            synthetic demo dataset (sites, subscribers, 10 days of history)
 src/
   config.py                   env-based config, QoE band / risk-level thresholds
