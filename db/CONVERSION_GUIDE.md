@@ -6,9 +6,13 @@ same run order as before — only the content changed. To reconvert (go back
 to Oracle, or re-derive the mapping), diff each file here against its match
 in `db_oracle_original_backup/`; the rules below explain every diff you'll see.
 
-## Run order (unchanged)
+## Run order
 
-`01_schema.sql` -> `02_views.sql` -> `03_packages.sql` -> `04_triggers_scheduler.sql` -> `05_seed_data.sql`
+`01_schema.sql` -> `02_views.sql` -> `03_packages.sql` -> `05_seed_data.sql`
+
+(`04_triggers_scheduler.sql` used to sit between `03` and `05`; it's been
+removed — see the `COMPOUND TRIGGER` / `DBMS_SCHEDULER.CREATE_JOB` rows
+below for where that logic went.)
 
 ## Type mapping (01_schema.sql)
 
@@ -69,7 +73,7 @@ Other procedural constructs:
 | `FOR r IN (SELECT DISTINCT site_id ...) LOOP flag_churn_risk(r.site_id); END LOOP` | one set-based `UPDATE`, instead of calling the single-site procedure once per row — see the closing `UPDATE` in `build_triage_queue` |
 | the churn-check condition itself (`COUNT(*) FROM (...) >= n` as a scalar subquery correlated to the row being updated) | rewritten as a `CREATE OR REPLACE TEMPORARY VIEW` that computes the eligible `site_id`s first (via `ROW_NUMBER()`/`GROUP BY ... HAVING`), followed by a plain `UPDATE ... WHERE home_site_id IN (SELECT site_id FROM that_view)` | A correlated subquery nested several levels deep inside an `UPDATE`'s `WHERE` clause is exactly the kind of construct that varies most between SQL engines. Splitting it into "compute eligible sites" then "update where site is in that set" is provably correct set logic, and each half can be run and inspected on its own (`SELECT * FROM _churn_check_...`) if something looks wrong |
 | `COMPOUND TRIGGER` (`trg_qoe_churn_check`) | Databricks has no DML triggers at all. The churn-check logic is folded directly into `score_site_qoe_rule_based` (both single-site and all-sites versions) in `03_packages.sql`, right after the `MERGE INTO qoe_score` — it now runs automatically every time that script runs, same as the trigger used to fire on every `INSERT` |
-| `DBMS_SCHEDULER.CREATE_JOB` (`04_triggers_scheduler.sql`) | No SQL equivalent, and removed rather than recreated — production gets its data from a UI instead of a continuous live feed, so there's nothing to refresh on a schedule. The pipeline runs against the static CSVs under `data/mock/` for now (see `scripts/demo_from_csv.py` / `scripts/demo_from_sql.py`) |
+| `DBMS_SCHEDULER.CREATE_JOB`, and the file it lived in (`04_triggers_scheduler.sql`) | No SQL equivalent, and removed entirely (file deleted from both `db/` and `db_oracle_original_backup/`) rather than recreated — production gets its data from a UI instead of a continuous live feed, so there's nothing to refresh on a schedule. The pipeline runs against the static CSVs under `data/mock/` for now (see `scripts/demo_from_csv.py` / `scripts/demo_from_sql.py`) |
 
 ## Seed data (05_seed_data.sql)
 
@@ -102,7 +106,6 @@ re-run from scratch (e.g. to reset a demo workspace) without manual cleanup:
 | `01_schema.sql` | `DROP TABLE IF EXISTS` for every table, children before parents (Unity Catalog FK dependency tracking blocks dropping a table still referenced by another table's FK), right before the `CREATE TABLE` statements |
 | `02_views.sql` | `CREATE OR REPLACE VIEW` — no change needed |
 | `03_packages.sql` | `CREATE OR REPLACE FUNCTION`/`TEMPORARY VIEW`, `DECLARE OR REPLACE VARIABLE`, and `MERGE`/`DELETE`-then-`INSERT` for anything with side effects — no change needed |
-| `04_triggers_scheduler.sql` | comments only, nothing to run — the scheduler jobs were removed rather than made re-runnable |
 | `05_seed_data.sql` | plain `INSERT`s would duplicate rows (and layer a second, differently-dated incident window) on a second run, so `DELETE FROM` clears every seeded table, children before parents, before the inserts |
 
 ## What still needs a value filled in

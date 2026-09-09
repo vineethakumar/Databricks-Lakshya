@@ -2,8 +2,8 @@
 -- Use Case 1: Call Failure & Customer Experience Prediction
 -- 01_schema.sql — core dimension + fact tables (Oracle PL/SQL)
 --
--- Run order: 01_schema.sql -> 02_views.sql -> 03_packages.sql
---            -> 04_triggers_scheduler.sql -> 05_seed_data.sql
+-- Run order: 01_schema.sql -> 02_views.sql -> 03_packages.sql -> 05_seed_data.sql
+-- (04_triggers_scheduler.sql removed — see db/CONVERSION_GUIDE.md)
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------

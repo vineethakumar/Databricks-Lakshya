@@ -3,8 +3,7 @@
 -- 01_schema.sql — core dimension + fact tables (Databricks SQL / Delta Lake,
 -- Unity Catalog)
 --
--- Run order: 01_schema.sql -> 02_views.sql -> 03_packages.sql
---            -> 04_triggers_scheduler.sql -> 05_seed_data.sql
+-- Run order: 01_schema.sql -> 02_views.sql -> 03_packages.sql -> 05_seed_data.sql
 --
 -- Converted from Oracle. See CONVERSION_GUIDE.md for the full type/construct
 -- mapping table used across all 5 files. Quick recap of what changed here:

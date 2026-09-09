@@ -279,8 +279,8 @@ END;
 
 -- ---------------------------------------------------------------------------
 -- Backfill call_volume_hourly for the whole seeded window so the LSTM
--- pipeline and views have data immediately (normally the scheduler job does
--- this hourly on an ongoing basis — see 04_triggers_scheduler.sql).
+-- pipeline and views have data immediately (there is no scheduler job
+-- refreshing this on an ongoing basis — see db/CONVERSION_GUIDE.md).
 -- ---------------------------------------------------------------------------
 BEGIN
     pkg_feature_engineering.build_call_volume_hourly(

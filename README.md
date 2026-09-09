@@ -141,7 +141,7 @@ docker compose up -d
 ```
 
 This pulls `gvenzl/oracle-free` and automatically runs everything in `db/`
-(schema → views → packages → triggers/scheduler → seed data) against the
+(schema → views → packages → seed data) against the
 `telecom_qoe` app schema on first startup. First boot takes a few minutes
 (seed data generates ~150-250k synthetic CDR rows across a simulated 3-day
 network incident on two sites, so both the LSTM and the QoE regression have
@@ -207,8 +207,7 @@ db/
   01_schema.sql               tables
   02_views.sql                feature views for the ML pipeline
   03_packages.sql             PKG_FEATURE_ENGINEERING / PKG_QOE_SCORING / PKG_TRIAGE
-  04_triggers_scheduler.sql   removed (see db/CONVERSION_GUIDE.md) — churn-check now
-                                 lives in 03_packages.sql, no scheduler needed
+                                 (churn-check included, no separate trigger/scheduler file)
   05_seed_data.sql            synthetic demo dataset (sites, subscribers, 10 days of history)
 src/
   config.py                   env-based config, QoE band / risk-level thresholds

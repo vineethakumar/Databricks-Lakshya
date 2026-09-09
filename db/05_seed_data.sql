@@ -271,9 +271,8 @@ LATERAL VIEW explode(sequence(
 
 -- ---------------------------------------------------------------------------
 -- Backfill call_volume_hourly for the whole seeded window so the LSTM
--- pipeline and views have data immediately (normally the scheduled job
--- described in 04_triggers_scheduler.sql does this hourly on an ongoing
--- basis).
+-- pipeline and views have data immediately (there is no scheduled job
+-- refreshing this on an ongoing basis — see db/CONVERSION_GUIDE.md).
 -- ---------------------------------------------------------------------------
 DECLARE OR REPLACE VARIABLE v_start_ts TIMESTAMP DEFAULT date_trunc('DAY', current_timestamp()) - INTERVAL 10 DAYS;
 DECLARE OR REPLACE VARIABLE v_end_ts   TIMESTAMP DEFAULT date_trunc('DAY', current_timestamp()) + INTERVAL 1 DAYS;
