@@ -1,0 +1,146 @@
+%% ER diagram for db/01_schema.sql — Use Case 1: Call Failure & QoE Prediction
+%% Regenerate/update this file whenever 01_schema.sql changes.
+%% Render at https://mermaid.live, in any Mermaid-aware Markdown viewer,
+%% or via the mermaid-cli (mmdc).
+
+erDiagram
+    SITE ||--o{ SUBSCRIBER : "home_site_id"
+    SITE ||--o{ CDR : "site_id"
+    SITE ||--o{ ALARM_LOG : "site_id"
+    SITE ||--o{ NETWORK_EVENT : "site_id"
+    SITE ||--o{ NETWORK_KPI : "site_id"
+    SITE ||--o{ TICKET : "site_id"
+    SITE ||--o{ CALL_VOLUME_HOURLY : "site_id"
+    SITE ||--o{ CALL_EVENT_PREDICTION : "site_id"
+    SITE ||--o{ QOE_SCORE : "site_id"
+    SITE ||--o{ TRIAGE_QUEUE : "site_id"
+    SUBSCRIBER ||--o{ CDR : "subscriber_id"
+    SUBSCRIBER |o--o{ TICKET : "subscriber_id (optional)"
+    SUBSCRIBER ||--o{ CUSTOMER_SATISFACTION : "subscriber_id"
+
+    SITE {
+        BIGINT site_id PK
+        STRING site_name
+        STRING region
+        DECIMAL latitude
+        DECIMAL longitude
+        STRING site_type
+        DECIMAL capacity_erlangs
+        TIMESTAMP created_ts
+    }
+    SUBSCRIBER {
+        BIGINT subscriber_id PK
+        STRING msisdn
+        STRING segment
+        STRING plan_type
+        INT tenure_months
+        DECIMAL monthly_arpu
+        STRING churn_flag
+        TIMESTAMP churn_flagged_ts
+        BIGINT home_site_id FK
+        TIMESTAMP created_ts
+    }
+    CDR {
+        BIGINT cdr_id PK
+        STRING call_id
+        BIGINT subscriber_id FK
+        BIGINT site_id FK
+        TIMESTAMP call_start_ts
+        TIMESTAMP call_end_ts
+        INT duration_sec
+        STRING call_type
+        STRING call_result
+        INT termination_cause_code
+    }
+    ALARM_LOG {
+        BIGINT alarm_id PK
+        BIGINT site_id FK
+        TIMESTAMP alarm_ts
+        TIMESTAMP cleared_ts
+        STRING alarm_type
+        STRING severity
+        STRING alarm_description
+    }
+    NETWORK_EVENT {
+        BIGINT event_id PK
+        BIGINT site_id FK
+        TIMESTAMP event_ts
+        STRING event_type
+        STRING event_severity
+        STRING event_description
+    }
+    NETWORK_KPI {
+        BIGINT kpi_id PK
+        BIGINT site_id FK
+        TIMESTAMP kpi_ts
+        DECIMAL latency_ms
+        DECIMAL jitter_ms
+        DECIMAL packet_drop_rate
+        DECIMAL call_drop_rate
+        DECIMAL rrc_setup_success_rate
+        DECIMAL throughput_mbps
+    }
+    TICKET {
+        BIGINT ticket_id PK
+        BIGINT subscriber_id FK
+        BIGINT site_id FK
+        TIMESTAMP opened_ts
+        TIMESTAMP closed_ts
+        BIGINT resolution_time_min
+        STRING category
+        STRING priority
+        STRING root_cause
+    }
+    CUSTOMER_SATISFACTION {
+        BIGINT survey_id PK
+        BIGINT subscriber_id FK
+        TIMESTAMP survey_ts
+        INT nps_score
+        INT csat_score
+        STRING channel
+    }
+    CALL_VOLUME_HOURLY {
+        BIGINT site_id PK
+        TIMESTAMP hour_ts PK
+        BIGINT total_calls
+        BIGINT dropped_calls
+        BIGINT failed_calls
+        BIGINT blocked_calls
+        DECIMAL success_rate
+        TIMESTAMP refreshed_ts
+    }
+    CALL_EVENT_PREDICTION {
+        BIGINT prediction_id PK
+        BIGINT site_id FK
+        TIMESTAMP prediction_ts
+        TIMESTAMP generated_ts
+        INT horizon_hours
+        BIGINT predicted_call_volume
+        DECIMAL predicted_drop_rate
+        DECIMAL predicted_failure_prob
+        STRING risk_level
+        STRING model_version
+    }
+    QOE_SCORE {
+        BIGINT qoe_id PK
+        BIGINT site_id FK
+        TIMESTAMP score_ts
+        DECIMAL predicted_qoe_score
+        STRING qoe_band
+        STRING model_version
+        TIMESTAMP created_ts
+    }
+    TRIAGE_QUEUE {
+        BIGINT triage_id PK
+        BIGINT site_id FK
+        TIMESTAMP prediction_ts
+        DECIMAL technical_severity_score
+        DECIMAL customer_impact_score
+        DECIMAL composite_priority_score
+        INT priority_rank
+        BIGINT high_value_subscribers_affected
+        BIGINT churn_risk_subscribers
+        STRING recommended_action
+        STRING status
+        TIMESTAMP created_ts
+    }
