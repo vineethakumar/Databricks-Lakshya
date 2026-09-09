@@ -133,6 +133,20 @@ python scripts/demo_from_sql.py
 
 No extra dependency — `sqlite3` is in the Python standard library.
 
+#### Have a real Databricks workspace and want to check you can reach it?
+
+```bash
+python scripts/test_databricks_connection.py
+```
+
+A standalone connectivity check using `databricks-sql-connector` against a
+real SQL Warehouse — set `DATABRICKS_SERVER_HOSTNAME` / `DATABRICKS_HTTP_PATH`
+/ `DATABRICKS_TOKEN` in `.env` first (see `.env.example`). This is
+independent of everything above: `src/db.py`'s local fallback only ever
+spins up an offline Spark+Delta session when not running inside an actual
+Databricks notebook/job, so it can't tell you whether a real connection
+would work — this script actually dials out and runs `SELECT 1`.
+
 ### 1. Start the database
 
 ```bash
