@@ -8,10 +8,17 @@ load_dotenv()
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# --- Oracle connection (scripts/oracle_db.py) ---
+# --- Oracle connection (scripts/oracle_db.py) — kept for backward compatibility ---
 DB_USER = os.getenv("DB_USER", "telecom_qoe")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "AppPassword123")
 DB_DSN = os.getenv("DB_DSN", "localhost:1521/FREEPDB1")
+
+# --- Databricks connection (src/db.py) ---
+DATABRICKS_SERVER_HOSTNAME = os.getenv("DATABRICKS_SERVER_HOSTNAME")
+DATABRICKS_HTTP_PATH = os.getenv("DATABRICKS_HTTP_PATH")
+DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN")
+DATABRICKS_CATALOG = os.getenv("DATABRICKS_CATALOG", "telecom_qoe_catalog")
+DATABRICKS_SCHEMA = os.getenv("DATABRICKS_SCHEMA", "telecom_qoe")
 
 # --- SQLite output store for predictions served by backend/app.py ---
 SQLITE_DB_PATH = PROJECT_ROOT / os.getenv("SQLITE_DB_PATH", "predictions.db")
