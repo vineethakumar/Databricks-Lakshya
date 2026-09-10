@@ -1,12 +1,14 @@
-"""API for the React UI (frontend/): reads training data from Oracle
-(scripts/oracle_db.py), trains the models (src/models/*, src/features.py)
+"""API for the React UI (frontend/): reads training data from Databricks
+(src/db.py), trains the models (src/models/*, src/features.py)
 once at startup, serves predictions over HTTP, and stores every prediction
 in a local SQLite database (src/predictions_store.py) for later lookup.
 
 Usage:
     pip install -r requirements.txt
-    # .env must have DB_USER/DB_PASSWORD/DB_DSN pointing at an Oracle DB
-    # with vw_site_hourly_features / vw_qoe_training_data views populated
+    # .env must have DATABRICKS_SERVER_HOSTNAME/DATABRICKS_HTTP_PATH/
+    # DATABRICKS_TOKEN/DATABRICKS_CATALOG/DATABRICKS_SCHEMA pointing at a
+    # Databricks workspace with vw_site_hourly_features / vw_qoe_training_data
+    # views populated (see db/ for the schema + seed data)
     uvicorn backend.app:app --reload --port 8000
 """
 import sys
@@ -19,8 +21,7 @@ from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts.oracle_db import build_db, fetch_df
-from src import config, predictions_store
+from src import config, db, predictions_store
 from src.features import build_latest_windows, build_windowed_dataset
 from src.models.call_event_lstm import CallEventLSTM
 from src.models.qoe_regression import QoERegressor
@@ -43,29 +44,25 @@ app.add_middleware(
 _state: dict = {}
 
 
-def load_data_from_oracle() -> tuple[pd.DataFrame, pd.DataFrame]:
-    conn = build_db()
-    try:
-        raw_df = fetch_df(conn, "SELECT * FROM vw_site_hourly_features")
-        raw_df["hour_ts"] = pd.to_datetime(raw_df["hour_ts"])
-        raw_df = raw_df.sort_values(["site_id", "hour_ts"]).reset_index(drop=True)
-        qoe_df = fetch_df(conn, "SELECT * FROM vw_qoe_training_data")
-    finally:
-        conn.close()
+def load_data_from_databricks() -> tuple[pd.DataFrame, pd.DataFrame]:
+    raw_df = db.fetch_df(f"SELECT * FROM {db.qualify('vw_site_hourly_features')}")
+    raw_df["hour_ts"] = pd.to_datetime(raw_df["hour_ts"])
+    raw_df = raw_df.sort_values(["site_id", "hour_ts"]).reset_index(drop=True)
+    qoe_df = db.fetch_df(f"SELECT * FROM {db.qualify('vw_qoe_training_data')}")
     return raw_df, qoe_df
 
 
 @app.on_event("startup")
 def load_and_train() -> None:
     predictions_store.init_db()
-    raw_df, qoe_df = load_data_from_oracle()
+    raw_df, qoe_df = load_data_from_databricks()
     dataset = build_windowed_dataset(raw_df, lookback_hours=LOOKBACK_HOURS, horizon_hours=HORIZON_HOURS)
     lstm = CallEventLSTM.train(dataset.X, dataset.y, dataset.scaler, lookback_hours=LOOKBACK_HOURS, epochs=15)
     qoe_model = QoERegressor.train(qoe_df)
     _state["raw_df"] = raw_df
     _state["lstm"] = lstm
     _state["qoe_model"] = qoe_model
-    print(f"Trained on {len(raw_df)} site-hours across {raw_df['site_id'].nunique()} sites (from Oracle).")
+    print(f"Trained on {len(raw_df)} site-hours across {raw_df['site_id'].nunique()} sites (from Databricks).")
 
 
 class QoeRequest(BaseModel):
