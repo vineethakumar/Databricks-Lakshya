@@ -1,6 +1,12 @@
-   command: ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "$DATABRICKS_APP_PORT"]
-   env:
-     - name: "DATABRICKS_CATALOG"
-       value: "telecom_qoe_catalog"
-     - name: "DATABRICKS_SCHEMA"
-       value: "telecom_qoe"
+command: ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "$DATABRICKS_APP_PORT"]
+env:
+  - name: "DATABRICKS_CATALOG"
+    value: "telecom_qoe_catalog"
+  - name: "DATABRICKS_SCHEMA"
+    value: "telecom_qoe"
+  - name: "DATABRICKS_SERVER_HOSTNAME"
+    value: "623546132844934.4.gcp.databricks.com"
+  - name: "DATABRICKS_HTTP_PATH"
+    value: "/sql/1.0/warehouses/a8818eb04735c04c"
+  - name: "DATABRICKS_TOKEN"
+    value: "dapid01533828f546c197151ab5a3bead21c"
