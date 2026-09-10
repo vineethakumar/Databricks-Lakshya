@@ -1,14 +1,17 @@
 """API for the React UI (frontend/): wraps the same model code the CLI
-demo uses (scripts/demo_local_no_db.py) behind two HTTP endpoints instead
-of a terminal print-out.
+demo uses (scripts/demo_from_oracle.py) behind HTTP endpoints instead of a
+terminal print-out.
 
-Trains on the same synthetic no-DB dataset as scripts/demo_local_no_db.py
-(data/mock/*.csv, generated once if missing), once at startup, and calls
-the exact same model code (src/models/*, src/features.py) — this file
-does not reimplement any prediction logic, only exposes it over HTTP.
+Fetches its training data from the Oracle DB (scripts/oracle_db.py, same
+views as scripts/demo_from_oracle.py: vw_site_hourly_features /
+vw_qoe_training_data), once at startup, and calls the exact same model
+code (src/models/*, src/features.py) — this file does not reimplement any
+prediction logic, only exposes it over HTTP.
 
 Usage:
     pip install -r requirements.txt
+    # .env must have DB_USER/DB_PASSWORD/DB_DSN pointing at an Oracle DB
+    # already populated via scripts/load_csv_to_oracle.py
     uvicorn backend.app:app --reload --port 8000
 """
 import sys
@@ -21,13 +24,12 @@ from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts.mock_data import load_or_generate, LOOKBACK_HOURS, HORIZON_HOURS
+from scripts.mock_data import LOOKBACK_HOURS, HORIZON_HOURS
+from scripts.oracle_db import build_db, fetch_df
 from src import config
 from src.features import build_latest_windows, build_windowed_dataset
 from src.models.call_event_lstm import CallEventLSTM
 from src.models.qoe_regression import QoERegressor
-
-DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "mock"
 
 app = FastAPI(title="Call Failure & QoE Prediction API")
 app.add_middleware(
@@ -43,16 +45,27 @@ app.add_middleware(
 _state: dict = {}
 
 
+def load_data_from_oracle() -> tuple[pd.DataFrame, pd.DataFrame]:
+    conn = build_db()
+    try:
+        raw_df = fetch_df(conn, "SELECT * FROM vw_site_hourly_features ORDER BY site_id, hour_ts")
+        raw_df["hour_ts"] = pd.to_datetime(raw_df["hour_ts"])
+        qoe_df = fetch_df(conn, "SELECT * FROM vw_qoe_training_data")
+    finally:
+        conn.close()
+    return raw_df, qoe_df
+
+
 @app.on_event("startup")
 def load_and_train() -> None:
-    raw_df, qoe_df, _site_meta_df = load_or_generate(DATA_DIR)
+    raw_df, qoe_df = load_data_from_oracle()
     dataset = build_windowed_dataset(raw_df, lookback_hours=LOOKBACK_HOURS, horizon_hours=HORIZON_HOURS)
     lstm = CallEventLSTM.train(dataset.X, dataset.y, dataset.scaler, lookback_hours=LOOKBACK_HOURS, epochs=15)
     qoe_model = QoERegressor.train(qoe_df)
     _state["raw_df"] = raw_df
     _state["lstm"] = lstm
     _state["qoe_model"] = qoe_model
-    print(f"Trained on {len(raw_df)} site-hours across {raw_df['site_id'].nunique()} sites.")
+    print(f"Trained on {len(raw_df)} site-hours across {raw_df['site_id'].nunique()} sites (from Oracle).")
 
 
 class QoeRequest(BaseModel):

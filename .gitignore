@@ -3,6 +3,7 @@ __pycache__/
 .venv/
 venv/
 .env
+scripts/oracle_env.sh
 artifacts/
 data/mock/
 .pytest_cache/

@@ -1,0 +1,17 @@
+#!/bin/bash
+# Oracle connection details for create_and_load_oracle_repo_data.py /
+# check_oracle_data_spark.py / check_oracle_create_permission_spark.py.
+#
+# Copy this to oracle_env.sh (untracked -- see .gitignore) and fill in real
+# values, then before running spark-submit each session:
+#
+#     source oracle_env.sh
+#
+# Never commit oracle_env.sh with real values filled in.
+
+export ORACLE_CONN_TYPE=tls        # "direct" or "tls"
+export ORACLE_HOST=your-host-here
+export ORACLE_PORT=1521
+export ORACLE_SERVICE=your-service-name-here
+export ORACLE_USER=admin
+export ORACLE_PASSWORD='your-password-here'
