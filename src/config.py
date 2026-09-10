@@ -7,21 +7,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-MODEL_DIR = PROJECT_ROOT / "artifacts"
-MODEL_DIR.mkdir(exist_ok=True)
 
-# --- Oracle connection (kept only so src/db.py can be reverted to the
-# Oracle version without touching config.py again; unused by the
-# Databricks/Delta db.py) ---
+# --- Oracle connection (scripts/oracle_db.py) ---
 DB_USER = os.getenv("DB_USER", "telecom_qoe")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "AppPassword123")
 DB_DSN = os.getenv("DB_DSN", "localhost:1521/FREEPDB1")
 
-# --- Databricks / Unity Catalog namespace for all Delta tables + views.
-# Mirrors the Oracle app schema (telecom_qoe) one level down: every table
-# and view keeps its Oracle name, just qualified as catalog.schema.name.
-DATABRICKS_CATALOG = os.getenv("DATABRICKS_CATALOG", "main")
-DATABRICKS_SCHEMA = os.getenv("DATABRICKS_SCHEMA", "telecom_qoe")
+# --- SQLite output store for predictions served by backend/app.py ---
+SQLITE_DB_PATH = PROJECT_ROOT / os.getenv("SQLITE_DB_PATH", "predictions.db")
 
 # --- Call-event LSTM ---
 LSTM_LOOKBACK_HOURS = int(os.getenv("LSTM_LOOKBACK_HOURS", "24"))

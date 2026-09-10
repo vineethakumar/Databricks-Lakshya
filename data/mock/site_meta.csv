@@ -1,0 +1,4 @@
+site_id,capacity_erlangs,high_value_count,subscriber_count,total_arpu,is_bad_site
+SITE-A-DOWNTOWN,800,6,30,1800.0,False
+SITE-B-SUBURB,500,3,30,1100.0,False
+SITE-C-INDUSTRIAL,400,9,30,2200.0,True

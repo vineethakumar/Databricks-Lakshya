@@ -1,0 +1,4 @@
+priority_rank,site_id,predicted_call_volume,predicted_drop_rate,predicted_failure_prob,qoe_score,technical_severity_score,customer_impact_score,composite_priority_score,recommended_action
+1,SITE-C-INDUSTRIAL,0.0,0.4983,0.4895,22.5,41.599,100.0,76.64,Dispatch field team immediately; notify high-value accounts proactively.
+2,SITE-A-DOWNTOWN,22.0,0.0411,0.0169,69.2,2.562,46.178,28.732,Monitor; add to next maintenance window.
+3,SITE-B-SUBURB,22.0,0.0411,0.0169,71.7,2.563,36.354,22.838,No action required.

@@ -1,17 +1,12 @@
-"""API for the React UI (frontend/): wraps the same model code the CLI
-demo uses (scripts/demo_from_oracle.py) behind HTTP endpoints instead of a
-terminal print-out.
-
-Fetches its training data from the Oracle DB (scripts/oracle_db.py, same
-views as scripts/demo_from_oracle.py: vw_site_hourly_features /
-vw_qoe_training_data), once at startup, and calls the exact same model
-code (src/models/*, src/features.py) — this file does not reimplement any
-prediction logic, only exposes it over HTTP.
+"""API for the React UI (frontend/): reads training data from Oracle
+(scripts/oracle_db.py), trains the models (src/models/*, src/features.py)
+once at startup, serves predictions over HTTP, and stores every prediction
+in a local SQLite database (src/predictions_store.py) for later lookup.
 
 Usage:
     pip install -r requirements.txt
     # .env must have DB_USER/DB_PASSWORD/DB_DSN pointing at an Oracle DB
-    # already populated via scripts/load_csv_to_oracle.py
+    # with vw_site_hourly_features / vw_qoe_training_data views populated
     uvicorn backend.app:app --reload --port 8000
 """
 import sys
@@ -24,12 +19,14 @@ from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts.mock_data import LOOKBACK_HOURS, HORIZON_HOURS
 from scripts.oracle_db import build_db, fetch_df
-from src import config
+from src import config, predictions_store
 from src.features import build_latest_windows, build_windowed_dataset
 from src.models.call_event_lstm import CallEventLSTM
 from src.models.qoe_regression import QoERegressor
+
+LOOKBACK_HOURS = config.LSTM_LOOKBACK_HOURS
+HORIZON_HOURS = config.LSTM_HORIZON_HOURS
 
 app = FastAPI(title="Call Failure & QoE Prediction API")
 app.add_middleware(
@@ -58,6 +55,7 @@ def load_data_from_oracle() -> tuple[pd.DataFrame, pd.DataFrame]:
 
 @app.on_event("startup")
 def load_and_train() -> None:
+    predictions_store.init_db()
     raw_df, qoe_df = load_data_from_oracle()
     dataset = build_windowed_dataset(raw_df, lookback_hours=LOOKBACK_HOURS, horizon_hours=HORIZON_HOURS)
     lstm = CallEventLSTM.train(dataset.X, dataset.y, dataset.scaler, lookback_hours=LOOKBACK_HOURS, epochs=15)
@@ -87,7 +85,9 @@ class QoeResponse(BaseModel):
 def predict_qoe(req: QoeRequest) -> QoeResponse:
     row = pd.DataFrame([req.model_dump()])
     score = float(_state["qoe_model"].predict(row)[0])
-    return QoeResponse(score=score, band=config.qoe_band(score))
+    result = QoeResponse(score=score, band=config.qoe_band(score))
+    predictions_store.save_qoe_prediction(req.model_dump(), result.model_dump())
+    return result
 
 
 @app.get("/api/sites")
@@ -128,9 +128,11 @@ def predict_forecast(req: ForecastRequest) -> ForecastResponse:
     latest = build_latest_windows(window_df, LOOKBACK_HOURS, _state["lstm"].scaler)
     call_volume, drop_rate, failure_prob = _state["lstm"].predict(latest.X)[0]
 
-    return ForecastResponse(
+    result = ForecastResponse(
         predicted_call_volume=max(0.0, float(call_volume)),
         predicted_drop_rate=float(drop_rate),
         predicted_failure_prob=float(failure_prob),
         risk_level=config.risk_level(float(failure_prob)),
     )
+    predictions_store.save_forecast_prediction(req.site_id, result.model_dump())
+    return result

@@ -1,63 +1,24 @@
 # Call Failure & Customer Experience Prediction
 
-Predicts call volume, call failures, and service-impacting events before they
-happen, and maps those predictions onto customer-perceived quality of
-experience (QoE) — so network issues get triaged by real customer impact
-instead of raw alarm noise.
+Predicts call volume, call failures, and service-impacting events, and maps
+those predictions onto customer-perceived quality of experience (QoE).
 
 ## Architecture
 
 ```
-CDR / alarms / events / KPIs / tickets / CSAT-NPS   (db/01_schema.sql)
-              │
+Oracle DB (vw_site_hourly_features / vw_qoe_training_data views)
+              │  scripts/oracle_db.py (python-oracledb)
               ▼
-   PL/SQL ETL: PKG_FEATURE_ENGINEERING               (db/03_packages.sql)
-   builds CALL_VOLUME_HOURLY from raw CDR on demand
-              │
+   backend/app.py (FastAPI)
+     - trains CallEventLSTM + QoERegressor on startup (src/models/*)
+     - POST /api/predict/qoe        -> QoE score + band
+     - POST /api/predict/forecast   -> call volume / drop-rate / failure-prob forecast
+     - GET  /api/sites, /api/sites/{id}/history
+     - every prediction is written to predictions.db (SQLite, src/predictions_store.py)
+              │  fetch()
               ▼
-   Feature views: VW_SITE_HOURLY_FEATURES,            (db/02_views.sql)
-                  VW_QOE_TRAINING_DATA
-              │
-     ┌────────┴─────────┐
-     ▼                   ▼
- LSTM forecast      Regression QoE model
- (src/models/       (src/models/qoe_regression.py)
-  call_event_lstm.py)      │
-     │                     │
-     ▼                     ▼
- CALL_EVENT_PREDICTION   QOE_SCORE          (src/predict_and_score.py writes both)
-     └────────┬──────────┘
-              ▼
-   PKG_TRIAGE.build_triage_queue             (db/03_packages.sql)
-   customer_impact_score (QoE gap × subscriber value)
-   + technical_severity_score (predicted failures × alarms)
-   = ranked TRIAGE_QUEUE, plus churn-risk flag on high-value
-     subscribers behind a sustained QoE dip (TRG_QOE_CHURN_CHECK)
+   frontend/ (React + Vite UI)
 ```
-
-The database is not just storage here — `PKG_FEATURE_ENGINEERING`,
-`PKG_QOE_SCORING`, and `PKG_TRIAGE` (all in `db/03_packages.sql`) hold real
-business logic: the CDR → hourly-aggregate ETL, a rule-based QoE fallback
-formula, and the customer-impact-weighted triage ranking + churn-risk
-flagging. Python owns the two ML models; PL/SQL owns aggregation, scoring
-fallback, and the triage/churn decision logic, run on demand rather than on
-a schedule — production will get its data from a UI instead of a
-continuous live feed.
-
-## Data model (`db/01_schema.sql`)
-
-| Table | Purpose |
-|---|---|
-| `site`, `subscriber` | dimensions: cell sites, subscribers (segment, ARPU, home site) |
-| `cdr` | raw call detail records (result: SUCCESS/DROPPED/FAILED/BLOCKED) |
-| `alarm_log`, `network_event` | alarms and network events per site |
-| `network_kpi` | hourly latency/jitter/drop-rate/throughput per site |
-| `ticket` | trouble tickets + resolution time |
-| `customer_satisfaction` | NPS/CSAT survey results |
-| `call_volume_hourly` | derived hourly CDR rollup (LSTM input, built by PL/SQL) |
-| `call_event_prediction` | LSTM output: forecast call volume/drop-rate/failure-prob |
-| `qoe_score` | regression (or rule-based fallback) QoE score, 0-100 |
-| `triage_queue` | final ranked worklist: technical severity × customer impact |
 
 ## Models
 
@@ -65,190 +26,60 @@ continuous live feed.
   6h-ahead forecast of call volume, drop rate, and failure probability per
   site. Multi-head Keras model (one shared LSTM trunk, three output heads).
 - **QoE regression** (`src/models/qoe_regression.py`): gradient-boosted
-  regressor mapping KPIs + subscriber segment to a composite 0-100 QoE score,
-  trained against real NPS/CSAT survey outcomes (`VW_QOE_TRAINING_DATA`).
+  regressor mapping KPIs + subscriber segment to a composite 0-100 QoE score.
+
+Both are trained from scratch, in memory, each time the backend starts —
+there is no separate training step or saved model artifact.
 
 ## Running it
 
-### Don't have Docker / Oracle available? Run the no-DB demo
+### 1. Configure the Oracle connection
 
 ```bash
+cp .env.example .env
+```
+
+Set `DB_USER` / `DB_PASSWORD` / `DB_DSN` to point at an Oracle DB whose
+`vw_site_hourly_features` and `vw_qoe_training_data` views are already
+populated. `SQLITE_DB_PATH` controls where predictions get stored
+(defaults to `predictions.db` in the project root).
+
+### 2. Start the backend
+
+```bash
+python -m venv venv
+venv\Scripts\activate              # Windows
 pip install -r requirements.txt
-python scripts/demo_local_no_db.py
+uvicorn backend.app:app --reload --port 8000
 ```
 
-`scripts/demo_local_no_db.py` loads a synthetic dataset (same story as
-`db/05_seed_data.sql`: 3 sites, one hits a 2-day incident) from
-`data/mock/*.csv` — generating and persisting it there the first time only,
-so later runs reuse the same on-disk data instead of regenerating it —
-trains the *actual* `CallEventLSTM` and `QoERegressor` classes from
-`src/models/` on it, runs inference, and re-ranks the sites using a
-pure-Python mirror of `PKG_TRIAGE`'s scoring formulas. It proves the model
-code and business logic are correct end to end, but it does **not** exercise
-the real PL/SQL (`db/03_packages.sql` only runs inside Oracle) or the
-Oracle read/write path in `src/db.py` / `src/predict_and_score.py` — for
-that you need the real database, below.
+On startup it connects to Oracle, pulls the two feature views, trains both
+models, and initializes `predictions.db`.
 
-#### Want to see (and edit) the mock data as CSV?
-
-The demo above already writes its input to `data/mock/*.csv` the first time
-it runs, so you can open it in Excel/a text editor and see exactly what
-feeds the KPI/QoE/triage logic. To regenerate it from scratch (e.g. after
-changing `scripts/mock_data.py`), delete `data/mock/*.csv` or re-run the
-writer directly, then re-run the pipeline against your edits:
+### 3. Start the frontend
 
 ```bash
-python scripts/generate_mock_csv.py   # (re)writes data/mock/*.csv from scratch
-python scripts/demo_from_csv.py       # reads those CSVs, trains, predicts, ranks
+cd frontend
+npm install
+npm run dev
 ```
 
-This writes three input files under `data/mock/`, each with ~1000 rows:
-
-| File | Shape | Mirrors |
-|---|---|---|
-| `site_hourly_features.csv` | one row per site per hour: call volume + KPIs (`latency_ms`, `jitter_ms`, `packet_drop_rate`, `call_drop_rate`, `rrc_setup_success_rate`, `throughput_mbps`) + alarm/event counts | `VW_SITE_HOURLY_FEATURES` (`db/02_views.sql`) — the LSTM's input |
-| `qoe_training_data.csv` | KPI reading + subscriber segment -> NPS/CSAT | `VW_QOE_TRAINING_DATA` (`db/02_views.sql`) — the QoE regressor's input |
-| `site_meta.csv` | per-site high-value subscriber count / total ARPU | `VW_SITE_SUBSCRIBER_VALUE` (`db/02_views.sql`) — used to weight `customer_impact_score` |
-
-Edit any KPI column by hand (e.g. push `call_drop_rate`/`latency_ms` up for a
-site) and re-run `demo_from_csv.py` to see how that change moves the QoE
-score, `technical_severity_score`, `customer_impact_score`, and the final
-triage rank — using the exact same `src/features.py` windowing and
-`src/models/` code as the Oracle-backed pipeline, just fed from CSV instead
-of `vw_site_hourly_features` / `vw_qoe_training_data`. It writes its own
-output back out to `data/mock/triage_queue_output.csv`.
-
-#### Want to see it fetched with an actual SQL query, no Oracle/Databricks needed?
-
-`scripts/demo_from_sql.py` runs the same pipeline but loads `data/mock/*.csv`
-into a local SQLite database (`scripts/mock_db.py`) and fetches its input
-with real `SELECT * FROM vw_site_hourly_features` / `vw_qoe_training_data` /
-`vw_site_subscriber_value` queries — the same view names and query shape
-`src/data_loader.py` uses against the real Databricks views in
-`db/02_views.sql`, just against SQLite instead of Spark:
-
-```bash
-python scripts/demo_from_sql.py
-```
-
-No extra dependency — `sqlite3` is in the Python standard library.
-
-#### Have a real Databricks workspace and want to check you can reach it?
-
-```bash
-python scripts/test_databricks_connection.py
-```
-
-A standalone connectivity check using `databricks-sql-connector` against a
-real SQL Warehouse — set `DATABRICKS_SERVER_HOSTNAME` / `DATABRICKS_HTTP_PATH`
-/ `DATABRICKS_TOKEN` in `.env` first (see `.env.example`). This is
-independent of everything above: `src/db.py`'s local fallback only ever
-spins up an offline Spark+Delta session when not running inside an actual
-Databricks notebook/job, so it can't tell you whether a real connection
-would work — this script actually dials out and runs `SELECT 1`.
-
-### 1. Start the database
-
-```bash
-cp .env.example .env          # adjust passwords if you want
-docker compose up -d
-```
-
-This pulls `gvenzl/oracle-free` and automatically runs everything in `db/`
-(schema → views → packages → seed data) against the
-`telecom_qoe` app schema on first startup. First boot takes a few minutes
-(seed data generates ~150-250k synthetic CDR rows across a simulated 3-day
-network incident on two sites, so both the LSTM and the QoE regression have
-real signal to learn from).
-
-Check readiness:
-
-```bash
-docker compose logs -f oracle-db      # wait for "DATABASE IS READY TO USE!"
-```
-
-### 2. Install Python dependencies
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate            # Windows
-pip install -r requirements.txt
-```
-
-### 3. Train both models and run one inference + triage pass
-
-```bash
-python scripts/run_pipeline.py
-```
-
-This trains the LSTM and the QoE regressor, saves both under `artifacts/`,
-runs inference for the latest hour per site, writes results into
-`call_event_prediction` and `qoe_score`, and calls
-`PKG_TRIAGE.build_triage_queue` to produce the ranked worklist — printing
-the top 10 rows at the end.
-
-### 4. Inspect the triage queue directly
-
-```sql
-SELECT site_id, priority_rank, composite_priority_score,
-       technical_severity_score, customer_impact_score,
-       high_value_subscribers_affected, recommended_action
-FROM triage_queue
-ORDER BY prediction_ts DESC, priority_rank;
-```
-
-### 5. Re-run on an ongoing basis
-
-There's no scheduler keeping this current on its own — production will get
-its data from a UI rather than a continuous live feed, so `call_volume_hourly`
-and the rule-based QoE fallback are only ever refreshed on demand by calling
-the relevant `03_packages.sql` script (or by re-running
-`scripts/run_pipeline.py`).
-
-## Tests
-
-```bash
-pytest
-```
-
-`tests/` covers the feature-windowing logic and the QoE composite label —
-pure functions that don't need a live database.
+Open the printed local URL. The **QoE Score** tab calls
+`POST /api/predict/qoe`; the **Call-Event Forecast** tab calls
+`POST /api/predict/forecast`. Every call is also recorded into
+`predictions.db` (`qoe_predictions` / `forecast_predictions` tables).
 
 ## Project layout
 
 ```
-db/
-  01_schema.sql               tables
-  02_views.sql                feature views for the ML pipeline
-  03_packages.sql             PKG_FEATURE_ENGINEERING / PKG_QOE_SCORING / PKG_TRIAGE
-                                 (churn-check included, no separate trigger/scheduler file)
-  05_seed_data.sql            synthetic demo dataset (sites, subscribers, 10 days of history)
+backend/app.py                 FastAPI app: Oracle fetch, train, predict, store
 src/
-  config.py                   env-based config, QoE band / risk-level thresholds
-  db.py                       oracledb connection helper
-  data_loader.py               pulls from the feature views
+  config.py                    env-based config (DB_*, SQLITE_DB_PATH, bands/thresholds)
+  predictions_store.py         SQLite persistence for prediction results
   features.py                  sliding-window feature engineering for the LSTM
   models/
     call_event_lstm.py         LSTM forecast model
-    qoe_regression.py           KPI -> QoE regression model
-  train_call_event_model.py     trains + saves the LSTM
-  train_qoe_model.py            trains + saves the regressor
-  predict_and_score.py          batch inference -> writes predictions -> rebuilds triage queue
-tests/
-scripts/
-  run_pipeline.py              runs the three Oracle-backed steps above end to end
-  mock_data.py                  synthetic data generator + pure-Python PKG_TRIAGE mirror
-                                 (shared by the two no-DB scripts below)
-  demo_local_no_db.py            no-DB demo: loads mock data from data/mock/*.csv
-                                 (generating it there once if missing), trains,
-                                 predicts, ranks
-  generate_mock_csv.py           writes the mock data to data/mock/*.csv for inspection
-  demo_from_csv.py                same pipeline as demo_local_no_db.py, reading its
-                                 input from data/mock/*.csv instead of memory
-  mock_db.py                     loads data/mock/*.csv into a local SQLite db and
-                                 exposes it as vw_site_hourly_features / etc. views
-  demo_from_sql.py                same pipeline, fetching its input via real SQL
-                                 queries (mock_db.py) instead of pandas.read_csv
-data/mock/                     generated by demo_local_no_db.py / generate_mock_csv.py (git-ignored input/output CSVs)
-docker-compose.yml             Oracle Free container, auto-runs db/ on first start
+    qoe_regression.py          KPI -> QoE regression model
+scripts/oracle_db.py           Oracle connection + SELECT -> DataFrame helper
+frontend/                      React + Vite UI
 ```

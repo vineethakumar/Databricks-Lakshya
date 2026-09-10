@@ -26,7 +26,7 @@ def build_model(lookback_hours: int, n_features: int) -> tf.keras.Model:
     # gradient is exactly zero everywhere and it never recovers — observed
     # in practice as call_volume_loss/mae staying frozen across every
     # epoch). Negative predictions are clipped to zero downstream instead
-    # (see predict_and_score.py: float(max(0, call_volume))).
+    # (see backend/app.py: max(0.0, float(call_volume))).
     call_volume = layers.Dense(1, name="call_volume")(shared)
     drop_rate = layers.Dense(1, activation="sigmoid", name="drop_rate")(shared)
     failure_prob = layers.Dense(1, activation="sigmoid", name="failure_prob")(shared)
