@@ -5,6 +5,12 @@ import pandas as pd
 
 from src import config
 
+# The CSV loaders (Spark's default JDBC writer especially) can create string
+# columns as CLOB instead of VARCHAR2. Without this, oracledb returns those
+# as opaque LOB objects (need .read(), unsortable/uncomparable) instead of
+# plain str -- this makes every column fetch as a normal Python value.
+oracledb.defaults.fetch_lobs = False
+
 
 def build_db() -> oracledb.Connection:
     """Opens a connection to the Oracle DB configured via

@@ -1,4 +1,7 @@
-const API_BASE = 'http://localhost:8000'
+// Uses whatever host the page itself was loaded from (localhost when
+// developing on the same machine, the VM's external IP when accessed
+// remotely) so this doesn't need to change based on where it's viewed from.
+const API_BASE = `http://${window.location.hostname}:8000`
 
 async function json(res) {
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`)

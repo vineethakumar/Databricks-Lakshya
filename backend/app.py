@@ -32,9 +32,10 @@ app = FastAPI(title="Call Failure & QoE Prediction API")
 app.add_middleware(
     CORSMiddleware,
     # Vite's dev server picks the next free port (5173, 5174, ...) if the
-    # default is already taken, so match any localhost port rather than one
-    # hardcoded value.
-    allow_origin_regex=r"http://localhost:\d+",
+    # default is already taken, and this may be viewed via localhost or a
+    # remote host's IP (e.g. a VM's external IP), so match any http origin
+    # rather than one hardcoded host/port.
+    allow_origin_regex=r"http://[\w.\-]+:\d+",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -45,8 +46,9 @@ _state: dict = {}
 def load_data_from_oracle() -> tuple[pd.DataFrame, pd.DataFrame]:
     conn = build_db()
     try:
-        raw_df = fetch_df(conn, "SELECT * FROM vw_site_hourly_features ORDER BY site_id, hour_ts")
+        raw_df = fetch_df(conn, "SELECT * FROM vw_site_hourly_features")
         raw_df["hour_ts"] = pd.to_datetime(raw_df["hour_ts"])
+        raw_df = raw_df.sort_values(["site_id", "hour_ts"]).reset_index(drop=True)
         qoe_df = fetch_df(conn, "SELECT * FROM vw_qoe_training_data")
     finally:
         conn.close()
