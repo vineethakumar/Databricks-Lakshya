@@ -4,10 +4,8 @@
 -- and click Run. It is db/01_schema.sql -> 02_views.sql -> 03_packages.sql
 -- -> 05_seed_data.sql concatenated in their required run order (all 4
 -- source files are unchanged; this file just saves you 4 copy/paste steps).
--- test
---
 -- BEFORE RUNNING: edit the catalog/schema names on the next two lines to
--- match your workspace (create the schema first if it doesn't exist yet:
+-- match your workspace (create the schem first if it doesn't exist yet:
 -- CREATE SCHEMA IF NOT EXISTS <catalog>.<schema>;).
 -- ============================================================================
    USE CATALOG telecom_qoe_catalog;
