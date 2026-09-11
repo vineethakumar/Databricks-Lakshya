@@ -1,6 +1,11 @@
 # Notebook: run_all_sql
 # Always runs the same file: RUN_ALL_IN_DATABRICKS.sql, from whichever
 # Git ref the Job task is configured to check out.
+from pyspark.sql import SparkSession
+spark = SparkSession.builder.getOrCreate()
+
+sql_file_path = "RUN_ALL_IN_DATABRICKS.sql"
+# ...rest of the script stays the same
 
 sql_file_path = "RUN_ALL_IN_DATABRICKS.sql"  # relative to repo root
 
