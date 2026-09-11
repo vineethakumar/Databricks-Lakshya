@@ -1,41 +1,31 @@
-import { useState } from 'react'
-import Header from './components/Header.jsx'
-import QoeForm from './components/QoeForm.jsx'
-import LstmForecast from './components/LstmForecast.jsx'
+// Same-origin relative paths: works locally (Vite proxies /api to :8000 in
+// dev — see vite.config.js) and inside Databricks Apps (backend/app.py
+// serves this built frontend AND the /api routes from the same https
+// origin, no separate host/port to hardcode).
+const API_BASE = ''
 
-const TABS = [
-  { id: 'qoe', label: 'QoE Score', description: 'Predict customer experience from a live KPI reading' },
-  { id: 'lstm', label: 'Call-Event Forecast', description: 'Forecast call volume, drop rate & failure risk per site' },
-]
+async function json(res) {
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`)
+  return res.json()
+}
 
-export default function App() {
-  const [tab, setTab] = useState('qoe')
-  const active = TABS.find((t) => t.id === tab)
+export const api = {
+  predictQoe: (payload) =>
+    fetch(`${API_BASE}/api/predict/qoe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).then(json),
 
-  return (
-    <div className="shell">
-      <Header />
+  listSites: () => fetch(`${API_BASE}/api/sites`).then(json),
 
-      <main className="content">
-        <nav className="segmented">
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              className={t.id === tab ? 'active' : ''}
-              onClick={() => setTab(t.id)}
-            >
-              {t.label}
-            </button>
-          ))}
-        </nav>
-        <p className="tab-description">{active.description}</p>
+  siteHistory: (siteId) =>
+    fetch(`${API_BASE}/api/sites/${encodeURIComponent(siteId)}/history`).then(json),
 
-        {tab === 'qoe' ? <QoeForm /> : <LstmForecast />}
-      </main>
-
-      <footer className="app-footer">
-        Powered by a gradient-boosted QoE regressor and an LSTM call-event forecaster — trained on live network telemetry.
-      </footer>
-    </div>
-  )
+  predictForecast: (payload) =>
+    fetch(`${API_BASE}/api/predict/forecast`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).then(json),
 }
