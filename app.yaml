@@ -9,4 +9,4 @@ env:
   - name: "DATABRICKS_HTTP_PATH"
     value: "/sql/1.0/warehouses/a8818eb04735c04c"
   - name: "DATABRICKS_TOKEN"
-    value: "dapid01533828f546c197151ab5a3bead21c"
+    value: "dapifcb40fea01a76709d352460991553630"
