@@ -1,7 +1,8 @@
-// Uses whatever host the page itself was loaded from (localhost when
-// developing on the same machine, the VM's external IP when accessed
-// remotely) so this doesn't need to change based on where it's viewed from.
-const API_BASE = `http://${window.location.hostname}:8000`
+// Same-origin relative paths: works locally (Vite proxies /api to :8000 in
+// dev — see vite.config.js) and inside Databricks Apps (backend/app.py
+// serves this built frontend AND the /api routes from the same https
+// origin, no separate host/port to hardcode).
+const API_BASE = ''
 
 async function json(res) {
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`)
