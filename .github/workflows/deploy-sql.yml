@@ -1,0 +1,19 @@
+name: Deploy RUN_ALL_IN_DATABRICKS.sql
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'RUN_ALL_IN_DATABRICKS.sql'
+
+jobs:
+  trigger-databricks-job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Databricks Job
+        run: |
+          curl -X POST \
+            https://623546132844934.4.gcp.databricks.com/api/2.1/jobs/run-now \
+            -H "Authorization: Bearer ${{ secrets.DATABRICKS_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"job_id": ${{ secrets.DATABRICKS_JOB_ID }}}'
