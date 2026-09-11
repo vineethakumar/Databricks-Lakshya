@@ -91,7 +91,7 @@ def predict_qoe(req: QoeRequest) -> QoeResponse:
 
 @app.get("/api/sites")
 def list_sites() -> list[str]:
-    return sorted(_state["raw_df"]["site_id"].unique().tolist())
+    return sorted(str(s) for s in _state["raw_df"]["site_id"].unique().tolist())
 
 
 @app.get("/api/sites/{site_id}/history")
