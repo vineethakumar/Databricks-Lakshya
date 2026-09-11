@@ -17,6 +17,7 @@ from pathlib import Path
 import pandas as pd
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -135,3 +136,12 @@ def predict_forecast(req: ForecastRequest) -> ForecastResponse:
     )
     predictions_store.save_forecast_prediction(req.site_id, result.model_dump())
     return result
+
+
+# Serves the built React UI (frontend/dist/, built via `npm run build`) from
+# this same app/origin. Mounted last, after every /api/... route above, so
+# static-file lookups never shadow the API — FastAPI matches routes in
+# registration order and falls through to StaticFiles only when no earlier
+# route matched. html=True serves index.html for unmatched paths too, so
+# client-side routing (if the UI adds any) keeps working on refresh.
+app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="static")
