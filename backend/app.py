@@ -96,12 +96,12 @@ def list_sites() -> list[str]:
 
 
 @app.get("/api/sites/{site_id}/history")
-def site_history(site_id: str) -> list[dict]:
-    site_hist = (
-        _state["raw_df"][_state["raw_df"]["site_id"] == site_id]
-        .sort_values("hour_ts")
-        .tail(LOOKBACK_HOURS)
-    )
+ def site_history(site_id: str) -> list[dict]:
+       site_hist = (
+           _state["raw_df"][_state["raw_df"]["site_id"].astype(str) == site_id]
+           .sort_values("hour_ts")
+           .tail(LOOKBACK_HOURS)
+       )
     out = site_hist.copy()
     out["hour_ts"] = out["hour_ts"].astype(str)
     return out.to_dict(orient="records")
