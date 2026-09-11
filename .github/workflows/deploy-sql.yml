@@ -1,4 +1,4 @@
-name: Deploy RUN_ALL_IN_DATABRICKS.sql
+name: Deploy SQL then Redeploy App
 
 on:
   push:
@@ -7,13 +7,59 @@ on:
       - 'RUN_ALL_IN_DATABRICKS.sql'
 
 jobs:
-  trigger-databricks-job:
+  run-sql-job:
     runs-on: ubuntu-latest
+    outputs:
+      run_id: ${{ steps.trigger.outputs.run_id }}
     steps:
       - name: Trigger Databricks Job
+        id: trigger
         run: |
-          curl -X POST \
+          RESPONSE=$(curl -s -X POST \
             https://623546132844934.4.gcp.databricks.com/api/2.1/jobs/run-now \
             -H "Authorization: Bearer ${{ secrets.DATABRICKS_TOKEN }}" \
             -H "Content-Type: application/json" \
-            -d '{"job_id": ${{ secrets.DATABRICKS_JOB_ID }}}'
+            -d '{"job_id": ${{ secrets.DATABRICKS_JOB_ID }}}')
+          echo "Trigger response: $RESPONSE"
+          RUN_ID=$(echo "$RESPONSE" | grep -o '"run_id":[0-9]*' | cut -d: -f2)
+          if [ -z "$RUN_ID" ]; then
+            echo "Failed to get run_id from response"
+            exit 1
+          fi
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for SQL job to finish
+        run: |
+          RUN_ID="${{ steps.trigger.outputs.run_id }}"
+          echo "Polling run $RUN_ID ..."
+          for i in $(seq 1 60); do
+            STATUS=$(curl -s -X GET \
+              "https://623546132844934.4.gcp.databricks.com/api/2.1/jobs/runs/get?run_id=$RUN_ID" \
+              -H "Authorization: Bearer ${{ secrets.DATABRICKS_TOKEN }}")
+            LIFE_CYCLE=$(echo "$STATUS" | grep -o '"life_cycle_state":"[A-Z_]*"' | head -1 | cut -d'"' -f4)
+            echo "Attempt $i — life_cycle_state=$LIFE_CYCLE"
+            if [ "$LIFE_CYCLE" = "TERMINATED" ] || [ "$LIFE_CYCLE" = "INTERNAL_ERROR" ]; then
+              RESULT=$(echo "$STATUS" | grep -o '"result_state":"[A-Z_]*"' | head -1 | cut -d'"' -f4)
+              echo "Final result_state=$RESULT"
+              if [ "$RESULT" != "SUCCESS" ]; then
+                echo "SQL job did not succeed. Failing pipeline."
+                exit 1
+              fi
+              echo "SQL job succeeded."
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "Timed out waiting for SQL job to finish."
+          exit 1
+
+  redeploy-app:
+    needs: run-sql-job
+    runs-on: ubuntu-latest
+    steps:
+      - uses: databricks/setup-cli@main
+      - name: Deploy app
+        env:
+          DATABRICKS_HOST: https://623546132844934.4.gcp.databricks.com
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+        run: databricks apps deploy databricks-fe
